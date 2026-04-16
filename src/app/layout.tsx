@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "36 Reach Rich | 삼육 투자 모임",
-  description: "삼육 모임 공동 투자 대시보드 - 매월 5만원씩 해외주식 투자",
+  title: "REACH RICH | 삼육 투자 모임",
+  description: "삼육, 올해엔 어디로 갈 것인가? 아니 가긴 가나..?",
+  metadataBase: new URL("https://36-reach-rich.vercel.app"),
 };
 
 export default function RootLayout({
