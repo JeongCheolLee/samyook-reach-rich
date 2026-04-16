@@ -60,12 +60,14 @@ export default async function Home() {
   let totalValue = 0;
   let deposit = 0; // 예수금 (현금 잔고)
   let apiError = "";
+  let debugDeposit = "";
 
   try {
     const [balance, depositData] = await Promise.all([
       getOverseasBalance(),
       getDeposit().catch(() => null),
     ]);
+    debugDeposit = JSON.stringify(depositData, null, 2);
 
     const rawHoldings = balance.output1 || [];
 
@@ -295,6 +297,12 @@ export default async function Home() {
           <section className="rounded-xl border border-card-border bg-card p-6 text-center text-muted text-sm">
             차트 데이터가 없습니다
           </section>
+        )}
+        {/* 디버그: 예수금 응답 (나중에 삭제) */}
+        {debugDeposit && (
+          <pre className="rounded-xl border border-card-border bg-card p-4 text-xs overflow-auto max-h-60">
+            {debugDeposit}
+          </pre>
         )}
       </main>
     </div>
