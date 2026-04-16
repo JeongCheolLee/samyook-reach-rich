@@ -6,48 +6,54 @@ const APP_SECRET = process.env.KIS_APP_SECRET!;
 const CANO = process.env.KIS_ACCOUNT_NO!;
 const ACNT_PRDT_CD = process.env.KIS_ACCOUNT_PRDT!;
 
-// 토큰 캐싱 (서버 메모리)
+// 토큰 캐싱 (서버 메모리 - Vercel Fluid Compute에서 인스턴스 간 공유)
 let cachedToken: { token: string; expiresAt: number } | null = null;
+// 동시 요청 시 토큰 발급을 1번만 하기 위한 락
+let tokenPromise: Promise<string> | null = null;
 
-/** Access Token 발급 (24시간 유효, 1분 제한 시 재시도) */
+/** Access Token 발급 (24시간 유효, 동시 요청 시 1회만 발급) */
 async function getAccessToken(): Promise<string> {
   if (cachedToken && Date.now() < cachedToken.expiresAt) {
     return cachedToken.token;
   }
 
-  const maxRetries = 3;
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const res = await fetch(`${BASE_URL}/oauth2/tokenP`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "client_credentials",
-        appkey: APP_KEY,
-        appsecret: APP_SECRET,
-      }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      // EGW00133: 1분당 1회 제한 - 잠깐 대기 후 재시도
-      if (text.includes("EGW00133") && attempt < maxRetries - 1) {
-        await new Promise((r) => setTimeout(r, 61000));
-        continue;
-      }
-      throw new Error(`Token 발급 실패: ${res.status} ${text}`);
-    }
-
-    const data = await res.json();
-    cachedToken = {
-      token: data.access_token,
-      // 만료 1시간 전에 갱신
-      expiresAt: Date.now() + (data.expires_in - 3600) * 1000,
-    };
-
-    return cachedToken.token;
+  // 이미 다른 요청이 토큰 발급 중이면 그 결과를 같이 기다림
+  if (tokenPromise) {
+    return tokenPromise;
   }
 
-  throw new Error("Token 발급 실패: 최대 재시도 초과");
+  tokenPromise = fetchToken();
+  try {
+    return await tokenPromise;
+  } finally {
+    tokenPromise = null;
+  }
+}
+
+async function fetchToken(): Promise<string> {
+  const res = await fetch(`${BASE_URL}/oauth2/tokenP`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "client_credentials",
+      appkey: APP_KEY,
+      appsecret: APP_SECRET,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Token 발급 실패: ${res.status} ${text}`);
+  }
+
+  const data = await res.json();
+  cachedToken = {
+    token: data.access_token,
+    // 만료 1시간 전에 갱신
+    expiresAt: Date.now() + (data.expires_in - 3600) * 1000,
+  };
+
+  return cachedToken.token;
 }
 
 /** 공통 GET 호출 헬퍼 */
