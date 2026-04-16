@@ -258,7 +258,7 @@ export default async function Home() {
                   totalContributed > 0
                     ? (m.totalContributed / totalContributed) * 100
                     : 0;
-                const myValue = Math.round(totalValue * (sharePercent / 100));
+                const myValue = Math.round(totalAssetKRW * (sharePercent / 100));
                 return (
                   <li
                     key={m.name}
