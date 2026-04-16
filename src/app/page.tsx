@@ -58,16 +58,16 @@ export default async function Home() {
   let chartData: ChartPoint[] = [];
   let totalInvested = 0;
   let totalValue = 0;
-  let deposit = 0; // 예수금 (현금 잔고)
+  let deposit = 0; // 예수금 USD
+  let exchangeRate = 0; // 환율
   let apiError = "";
-  let debugDeposit = "";
 
   try {
     const [balance, depositData] = await Promise.all([
       getOverseasBalance(),
       getDeposit().catch(() => null),
     ]);
-    debugDeposit = JSON.stringify(depositData, null, 2);
+
 
     const rawHoldings = balance.output1 || [];
 
@@ -85,11 +85,10 @@ export default async function Home() {
     totalInvested = holdings.reduce((s, h) => s + h.totalCost, 0);
     totalValue = holdings.reduce((s, h) => s + h.totalValue, 0);
 
-    // 예수금 파싱
-    if (depositData?.output2) {
-      for (const item of depositData.output2) {
-        deposit += Number(item.frcr_dncl_amt_2 || 0);
-      }
+    // 예수금 파싱 (매수가능금액 API의 output)
+    if (depositData?.output) {
+      deposit = Number(depositData.output.ord_psbl_frcr_amt || 0);
+      exchangeRate = Number(depositData.output.exrt || 0);
     }
 
     // 첫 번째 종목 차트
@@ -112,7 +111,10 @@ export default async function Home() {
 
   const memberList = getMembers();
   const memberCount = memberList.length;
-  const totalAsset = totalValue + deposit; // 총 자산 = 주식 평가금 + 예수금
+  const rate = exchangeRate || 1;
+  const depositKRW = Math.round(deposit * rate); // 예수금 원화
+  const totalValueKRW = Math.round(totalValue * rate); // 주식 평가금 원화
+  const totalAssetKRW = depositKRW + totalValueKRW; // 총 자산 원화
   const returnRate =
     totalInvested > 0
       ? ((totalValue - totalInvested) / totalInvested) * 100
@@ -120,7 +122,7 @@ export default async function Home() {
   const returnAmount = totalValue - totalInvested;
   const isPositive = returnRate >= 0;
   const perPersonValue =
-    memberCount > 0 ? Math.round(totalAsset / memberCount) : 0;
+    memberCount > 0 ? Math.round(totalAssetKRW / memberCount) : 0;
 
   const h = holdings[0] || null;
 
@@ -154,8 +156,8 @@ export default async function Home() {
 
         {/* 핵심 지표 카드 */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard label="총 자산" value={formatKRW(totalAsset)} />
-          <StatCard label="주식 평가금" value={formatKRW(totalValue)} />
+          <StatCard label="총 자산" value={formatKRW(totalAssetKRW)} />
+          <StatCard label="주식 평가금" value={formatKRW(totalValueKRW)} />
           <StatCard
             label="수익률"
             value={formatPercent(returnRate)}
@@ -163,7 +165,7 @@ export default async function Home() {
           />
           <StatCard
             label="예수금"
-            value={formatKRW(deposit)}
+            value={formatKRW(depositKRW)}
           />
         </div>
 
@@ -297,12 +299,6 @@ export default async function Home() {
           <section className="rounded-xl border border-card-border bg-card p-6 text-center text-muted text-sm">
             차트 데이터가 없습니다
           </section>
-        )}
-        {/* 디버그: 예수금 응답 (나중에 삭제) */}
-        {debugDeposit && (
-          <pre className="rounded-xl border border-card-border bg-card p-4 text-xs overflow-auto max-h-60">
-            {debugDeposit}
-          </pre>
         )}
       </main>
     </div>
