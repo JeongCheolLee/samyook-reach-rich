@@ -59,7 +59,7 @@ export default async function Home() {
   let totalInvested = 0;
   let totalValue = 0;
   let deposit = 0; // 예수금 (현금 잔고)
-  let apiError = false;
+  let apiError = "";
 
   try {
     const [balance, depositData] = await Promise.all([
@@ -104,8 +104,8 @@ export default async function Home() {
         // 차트 실패해도 계속
       }
     }
-  } catch {
-    apiError = true;
+  } catch (e) {
+    apiError = e instanceof Error ? e.message : "Unknown error";
   }
 
   const memberList = getMembers();
@@ -137,7 +137,7 @@ export default async function Home() {
           </div>
           {apiError && (
             <span className="text-xs text-negative bg-negative-bg px-3 py-1 rounded-full">
-              API 연결 실패
+              {apiError}
             </span>
           )}
         </div>
