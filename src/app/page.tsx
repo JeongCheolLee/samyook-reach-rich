@@ -1,5 +1,5 @@
 import { members } from "@/lib/mock-data";
-import { getOverseasBalance, getOverseasDailyPrice, getDeposit, getKRWDeposit } from "@/lib/kis";
+import { getOverseasBalance, getOverseasDailyPrice, getDeposit } from "@/lib/kis";
 import { getMembers } from "@/lib/members";
 import { DestinationProgress } from "@/components/destination-progress";
 import { StockChart } from "@/components/stock-chart";
@@ -59,15 +59,13 @@ export default async function Home() {
   let totalInvested = 0;
   let totalValue = 0;
   let depositUSD = 0; // 외화 예수금
-  let depositKRWRaw = 0; // 원화 예수금
   let exchangeRate = 0; // 환율
   let apiError = "";
 
   try {
-    const [balance, depositData, krwDepositData] = await Promise.all([
+    const [balance, depositData] = await Promise.all([
       getOverseasBalance(),
       getDeposit().catch(() => null),
-      getKRWDeposit().catch(() => null),
     ]);
 
     const rawHoldings = balance.output1 || [];
@@ -92,10 +90,7 @@ export default async function Home() {
       exchangeRate = Number(depositData.output.exrt || 0);
     }
 
-    // 원화 예수금 파싱
-    if (krwDepositData?.output) {
-      depositKRWRaw = Number(krwDepositData.output.ord_psbl_cash || krwDepositData.output.nrcvb_buy_amt || 0);
-    }
+
 
     // 첫 번째 종목 차트
     if (holdings.length > 0) {
@@ -120,8 +115,7 @@ export default async function Home() {
   const rate = exchangeRate || 1;
   const depositUSDtoKRW = Math.round(depositUSD * rate); // 외화 예수금 → 원화
   const totalValueKRW = Math.round(totalValue * rate); // 주식 평가금 원화
-  const totalDepositKRW = depositKRWRaw + depositUSDtoKRW; // 총 예수금 (원화 + 외화환산)
-  const totalAssetKRW = totalDepositKRW + totalValueKRW; // 총 자산 원화
+  const totalAssetKRW = depositUSDtoKRW + totalValueKRW; // 총 자산 원화
   const returnRate =
     totalInvested > 0
       ? ((totalValue - totalInvested) / totalInvested) * 100
@@ -162,7 +156,7 @@ export default async function Home() {
         />
 
         {/* 핵심 지표 카드 */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
           <StatCard label="총 자산" value={formatKRW(totalAssetKRW)} />
           <StatCard label="주식 평가금" value={formatKRW(totalValueKRW)} />
           <StatCard
@@ -171,8 +165,12 @@ export default async function Home() {
             color={isPositive ? "positive" : "negative"}
           />
           <StatCard
-            label="예수금"
-            value={formatKRW(totalDepositKRW)}
+            label="예수금 (USD)"
+            value={formatUSD(depositUSD)}
+          />
+          <StatCard
+            label="예수금 (KRW)"
+            value={formatKRW(depositUSDtoKRW)}
           />
         </div>
 
