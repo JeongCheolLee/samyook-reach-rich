@@ -1,5 +1,5 @@
 import { members } from "@/lib/mock-data";
-import { getOverseasBalance, getOverseasDailyPrice, getDeposit } from "@/lib/kis";
+import { getOverseasBalance, getOverseasDailyPrice, getDeposit, getKRWDeposit } from "@/lib/kis";
 import { getMembers } from "@/lib/members";
 import { DestinationProgress } from "@/components/destination-progress";
 import { StockChart } from "@/components/stock-chart";
@@ -58,14 +58,16 @@ export default async function Home() {
   let chartData: ChartPoint[] = [];
   let totalInvested = 0;
   let totalValue = 0;
-  let depositUSD = 0; // 외화 예수금
+  let depositUSD = 0; // 달러 잔고
+  let depositKRW = 0; // 원화 잔고
   let exchangeRate = 0; // 환율
   let apiError = "";
 
   try {
-    const [balance, depositData] = await Promise.all([
+    const [balance, depositData, krwData] = await Promise.all([
       getOverseasBalance(),
       getDeposit().catch(() => null),
+      getKRWDeposit().catch(() => null),
     ]);
 
     const rawHoldings = balance.output1 || [];
@@ -90,7 +92,10 @@ export default async function Home() {
       exchangeRate = Number(depositData.output.exrt || 0);
     }
 
-
+    // 원화 예수금 파싱
+    if (krwData?.output) {
+      depositKRW = Number(krwData.output.ord_psbl_cash || krwData.output.dnca_tot_amt || 0);
+    }
 
     // 첫 번째 종목 차트
     if (holdings.length > 0) {
@@ -113,9 +118,9 @@ export default async function Home() {
   const memberList = getMembers();
   const memberCount = memberList.length;
   const rate = exchangeRate || 1;
-  const depositUSDtoKRW = Math.round(depositUSD * rate); // 외화 예수금 → 원화
+  const depositUSDtoKRW = Math.round(depositUSD * rate); // 외화 예수금 → 원화 환산
   const totalValueKRW = Math.round(totalValue * rate); // 주식 평가금 원화
-  const totalAssetKRW = depositUSDtoKRW + totalValueKRW; // 총 자산 원화
+  const totalAssetKRW = depositKRW + depositUSDtoKRW + totalValueKRW; // 총 자산
   const returnRate =
     totalInvested > 0
       ? ((totalValue - totalInvested) / totalInvested) * 100
@@ -165,12 +170,12 @@ export default async function Home() {
             color={isPositive ? "positive" : "negative"}
           />
           <StatCard
-            label="예수금 (USD)"
+            label="달러 잔고"
             value={formatUSD(depositUSD)}
           />
           <StatCard
-            label="예수금 (KRW)"
-            value={formatKRW(depositUSDtoKRW)}
+            label="원화 잔고"
+            value={formatKRW(depositKRW)}
           />
         </div>
 
