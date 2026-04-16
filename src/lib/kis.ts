@@ -255,11 +255,12 @@ export async function getBuyableAmount(
 
 /** 예수금(잔고) 조회 */
 export async function getDeposit() {
+  const cano10 = CANO.padStart(10, "0"); // CTRP6504R은 10자리 요구
   const data = await kisGet(
     "/uapi/overseas-stock/v1/trading/inquire-present-balance",
     "CTRP6504R",
     {
-      CANO,
+      CANO: cano10,
       ACNT_PRDT_CD,
       WCRC_FRCR_DVSN_CD: "02", // 외화
       NATN_CD: "840", // 미국
