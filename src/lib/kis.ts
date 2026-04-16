@@ -296,7 +296,7 @@ export async function getBuyableAmount(
   return data;
 }
 
-/** 예수금 조회 (매수가능금액 API 활용) */
+/** 예수금 조회 - USD (매수가능금액 API 활용) */
 export async function getDeposit() {
   const data = await kisGet(
     "/uapi/overseas-stock/v1/trading/inquire-psamount",
@@ -307,6 +307,25 @@ export async function getDeposit() {
       OVRS_EXCG_CD: "NASD",
       OVRS_ORD_UNPR: "1",
       ITEM_CD: "AAPL",
+    }
+  );
+
+  return data;
+}
+
+/** 원화 예수금 조회 (국내주식 매수가능조회) */
+export async function getKRWDeposit() {
+  const data = await kisGet(
+    "/uapi/domestic-stock/v1/trading/inquire-psbl-order",
+    "TTTC8908R",
+    {
+      CANO,
+      ACNT_PRDT_CD,
+      PDNO: "005930", // 아무 종목 (삼성전자)
+      ORD_UNPR: "1",
+      ORD_DVSN: "01",
+      CMA_EVLU_AMT_ICLD_YN: "Y",
+      OVRS_ICLD_YN: "Y",
     }
   );
 
