@@ -1,36 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# REACH RICH
 
-## Getting Started
+### 삼육, 올해엔 어디로 갈 것인가? 아니 가긴 가나..?
 
-First, run the development server:
+8명의 친구가 매달 돈을 모아 미국 주식에 투자하고, 1년 뒤 수익률에 따라 여행을 떠나는 프로젝트.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+수익률이 높으면 유럽, 낮으면... 발산역.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 여행지 티어
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| 인당 평가금 | 목적지 |
+|---|---|
+| 200만원+ | 유럽 |
+| 180만원 | 일본 |
+| 160만원 | 제주도 |
+| 140만원 | 강릉 |
+| 120만원 | 가평 펜션 |
+| 100만원 | 속초 당일치기 |
+| 80만원 | 한강 치킨 |
+| 60만원 | 편의점 삼각김밥 |
+| 40만원 | 발산역 |
+| 20만원 | 각자 집 |
+| 0원 | 손절 |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 기능
 
-## Learn More
+- 한국투자증권 OpenAPI 실시간 연동
+- 보유 종목 현황 + 수익률
+- 인당 평가금 기반 여행지 프로그레스 바
+- 멤버별 납입금 / 평가금 표시
+- 주가 차트 (recharts)
+- 어드민 페이지 (멤버 관리)
 
-To learn more about Next.js, take a look at the following resources:
+## 기술 스택
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Next.js 16 + TypeScript + Tailwind CSS + Vercel
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 멤버
 
-## Deploy on Vercel
+민우 성윤 재홍 철현 상운 우재 준형 세운
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+삼육 부자야~~~~
