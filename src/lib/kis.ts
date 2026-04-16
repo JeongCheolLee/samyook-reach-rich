@@ -1,23 +1,66 @@
 // 한국투자증권 Open API 클라이언트 (실전투자)
 
+import { put, head } from "@vercel/blob";
+
 const BASE_URL = process.env.KIS_BASE_URL!;
 const APP_KEY = process.env.KIS_APP_KEY!;
 const APP_SECRET = process.env.KIS_APP_SECRET!;
 const CANO = process.env.KIS_ACCOUNT_NO!;
 const ACNT_PRDT_CD = process.env.KIS_ACCOUNT_PRDT!;
 
-// 토큰 캐싱 (서버 메모리 - Vercel Fluid Compute에서 인스턴스 간 공유)
+const TOKEN_BLOB_KEY = "kis-token.json";
+
+// 메모리 캐시 (웜 스타트 시 재사용)
 let cachedToken: { token: string; expiresAt: number } | null = null;
 // 동시 요청 시 토큰 발급을 1번만 하기 위한 락
 let tokenPromise: Promise<string> | null = null;
 
-/** Access Token 발급 (24시간 유효, 동시 요청 시 1회만 발급) */
+/** Blob에서 저장된 토큰 읽기 */
+async function loadTokenFromBlob(): Promise<{
+  token: string;
+  expiresAt: number;
+} | null> {
+  try {
+    const blob = await head(TOKEN_BLOB_KEY);
+    if (!blob) return null;
+    const res = await fetch(blob.url);
+    const data = await res.json();
+    if (data.token && data.expiresAt && Date.now() < data.expiresAt) {
+      return data;
+    }
+  } catch {
+    // Blob 없거나 읽기 실패
+  }
+  return null;
+}
+
+/** Blob에 토큰 저장 */
+async function saveTokenToBlob(token: string, expiresAt: number) {
+  try {
+    await put(TOKEN_BLOB_KEY, JSON.stringify({ token, expiresAt }), {
+      access: "public",
+      addRandomSuffix: false,
+    });
+  } catch {
+    // 저장 실패해도 메모리 캐시로 동작
+  }
+}
+
+/** Access Token 발급 (24시간 유효, 동시 요청 시 1회만 발급, Blob 영구 저장) */
 async function getAccessToken(): Promise<string> {
+  // 1. 메모리 캐시 확인
   if (cachedToken && Date.now() < cachedToken.expiresAt) {
     return cachedToken.token;
   }
 
-  // 이미 다른 요청이 토큰 발급 중이면 그 결과를 같이 기다림
+  // 2. Blob에서 읽기 (콜드 스타트 시)
+  const blobToken = await loadTokenFromBlob();
+  if (blobToken) {
+    cachedToken = blobToken;
+    return blobToken.token;
+  }
+
+  // 3. 새로 발급 (락으로 동시 요청 방지)
   if (tokenPromise) {
     return tokenPromise;
   }
@@ -47,11 +90,11 @@ async function fetchToken(): Promise<string> {
   }
 
   const data = await res.json();
-  cachedToken = {
-    token: data.access_token,
-    // 만료 1시간 전에 갱신
-    expiresAt: Date.now() + (data.expires_in - 3600) * 1000,
-  };
+  const expiresAt = Date.now() + (data.expires_in - 3600) * 1000;
+  cachedToken = { token: data.access_token, expiresAt };
+
+  // Blob에 영구 저장 (다음 콜드 스타트에서 재사용)
+  await saveTokenToBlob(data.access_token, expiresAt);
 
   return cachedToken.token;
 }
@@ -253,19 +296,17 @@ export async function getBuyableAmount(
   return data;
 }
 
-/** 예수금(잔고) 조회 */
+/** 예수금 조회 (매수가능금액 API 활용) */
 export async function getDeposit() {
-  const cano10 = CANO.padStart(10, "0"); // CTRP6504R은 10자리 요구
   const data = await kisGet(
-    "/uapi/overseas-stock/v1/trading/inquire-present-balance",
-    "CTRP6504R",
+    "/uapi/overseas-stock/v1/trading/inquire-psamount",
+    "TTTS3007R",
     {
-      CANO: cano10,
+      CANO,
       ACNT_PRDT_CD,
-      WCRC_FRCR_DVSN_CD: "02", // 외화
-      NATN_CD: "840", // 미국
-      TR_MKET_CD: "00",
-      INQR_DVSN_CD: "00",
+      OVRS_EXCG_CD: "NASD",
+      OVRS_ORD_UNPR: "1",
+      ITEM_CD: "AAPL",
     }
   );
 

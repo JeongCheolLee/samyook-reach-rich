@@ -67,7 +67,7 @@ export default async function Home() {
       getOverseasBalance(),
       getDeposit().catch(() => null),
     ]);
-    debugDeposit = JSON.stringify(balance, null, 2);
+    debugDeposit = JSON.stringify(depositData, null, 2);
 
     const rawHoldings = balance.output1 || [];
 
