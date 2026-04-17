@@ -1,5 +1,5 @@
 import { members } from "@/lib/mock-data";
-import { getOverseasBalance, getOverseasDailyPrice, getDeposit, getKRWDeposit } from "@/lib/kis";
+import { getOverseasBalance, getOverseasDailyPrice, getOverseasPrice, getDeposit, getKRWDeposit } from "@/lib/kis";
 import { getMembers } from "@/lib/members";
 import { DestinationProgress } from "@/components/destination-progress";
 import { StockChart } from "@/components/stock-chart";
@@ -52,10 +52,21 @@ interface ChartPoint {
   price: number;
 }
 
+interface PriceDetail {
+  open: number;
+  high: number;
+  low: number;
+  prevClose: number;
+  change: number;
+  changeRate: number;
+  volume: number;
+}
+
 export default async function Home() {
   // 실데이터 fetch
   let holdings: HoldingData[] = [];
   let chartData: ChartPoint[] = [];
+  let priceDetail: PriceDetail | null = null;
   let totalInvested = 0;
   let totalValue = 0;
   let depositUSD = 0; // 달러 잔고
@@ -97,18 +108,34 @@ export default async function Home() {
       depositKRW = Number(krwData.output.ord_psbl_cash || krwData.output.dnca_tot_amt || 0);
     }
 
-    // 첫 번째 종목 차트
+    // 첫 번째 종목 차트 + 현재가 상세
     if (holdings.length > 0) {
       try {
-        const daily = await getOverseasDailyPrice(holdings[0].symbol);
+        const [daily, price] = await Promise.all([
+          getOverseasDailyPrice(holdings[0].symbol),
+          getOverseasPrice(holdings[0].symbol).catch(() => null),
+        ]);
         chartData = (daily.output2 || [])
           .map((d: Record<string, string>) => ({
             date: `${d.xymd.slice(4, 6)}/${d.xymd.slice(6)}`,
             price: Number(d.clos || 0),
           }))
           .reverse();
+
+        if (price?.output) {
+          const p = price.output;
+          priceDetail = {
+            open: Number(p.oprc || 0),
+            high: Number(p.hprc || 0),
+            low: Number(p.lprc || 0),
+            prevClose: Number(p.base || 0),
+            change: Number(p.diff || 0),
+            changeRate: Number(p.rate || 0),
+            volume: Number(p.tvol || 0),
+          };
+        }
       } catch {
-        // 차트 실패해도 계속
+        // 차트/가격 실패해도 계속
       }
     }
   } catch (e) {
@@ -185,6 +212,7 @@ export default async function Home() {
           {h ? (
             (() => {
               const positive = h.returnRate >= 0;
+              const dayPositive = priceDetail ? priceDetail.change >= 0 : true;
               return (
                 <section className="rounded-xl border border-card-border bg-card p-6">
                   <div className="flex items-center justify-between mb-4">
@@ -192,25 +220,55 @@ export default async function Home() {
                       <h2 className="text-2xl font-bold">{h.symbol}</h2>
                       <span className="text-sm text-muted">{h.name}</span>
                     </div>
-                    <div
-                      className={`text-2xl font-bold ${
-                        positive ? "text-positive" : "text-negative"
-                      }`}
-                    >
-                      {formatPercent(h.returnRate)}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                      <div className="text-xs text-muted mb-0.5">현재가</div>
-                      <div className="font-mono font-semibold">
+                    <div className="text-right">
+                      <div
+                        className={`text-2xl font-bold ${
+                          positive ? "text-positive" : "text-negative"
+                        }`}
+                      >
                         {formatUSD(h.currentPrice)}
                       </div>
+                      {priceDetail && (
+                        <div
+                          className={`text-sm font-mono ${
+                            dayPositive ? "text-positive" : "text-negative"
+                          }`}
+                        >
+                          {dayPositive ? "▲" : "▼"}{" "}
+                          {formatUSD(Math.abs(priceDetail.change))}{" "}
+                          ({dayPositive ? "+" : ""}{priceDetail.changeRate.toFixed(2)}%)
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <div className="text-xs text-muted mb-0.5">
-                        평균 매수가
+                  </div>
+
+                  {priceDetail && (
+                    <div className="flex items-center gap-3 mb-4 py-2 px-3 rounded-lg bg-card-border/30">
+                      <div className="flex-1 text-center">
+                        <div className="text-[10px] text-muted">시가</div>
+                        <div className="text-xs font-mono font-medium">{formatUSD(priceDetail.open)}</div>
                       </div>
+                      <div className="w-px h-6 bg-card-border" />
+                      <div className="flex-1 text-center">
+                        <div className="text-[10px] text-muted">고가</div>
+                        <div className="text-xs font-mono font-medium text-positive">{formatUSD(priceDetail.high)}</div>
+                      </div>
+                      <div className="w-px h-6 bg-card-border" />
+                      <div className="flex-1 text-center">
+                        <div className="text-[10px] text-muted">저가</div>
+                        <div className="text-xs font-mono font-medium text-negative">{formatUSD(priceDetail.low)}</div>
+                      </div>
+                      <div className="w-px h-6 bg-card-border" />
+                      <div className="flex-1 text-center">
+                        <div className="text-[10px] text-muted">거래량</div>
+                        <div className="text-xs font-mono font-medium">{new Intl.NumberFormat("en-US", { notation: "compact" }).format(priceDetail.volume)}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <div className="text-xs text-muted mb-0.5">평균 매수가</div>
                       <div className="font-mono font-semibold">
                         {formatUSD(h.avgPrice)}
                       </div>
@@ -218,6 +276,12 @@ export default async function Home() {
                     <div>
                       <div className="text-xs text-muted mb-0.5">보유 수량</div>
                       <div className="font-semibold">{h.quantity}주</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted mb-0.5">매수금</div>
+                      <div className="font-mono font-semibold">
+                        {formatUSD(h.totalCost)}
+                      </div>
                     </div>
                     <div>
                       <div className="text-xs text-muted mb-0.5">평가금</div>
@@ -234,6 +298,18 @@ export default async function Home() {
                       </div>
                     </div>
                   </div>
+
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs text-muted">내 수익률</span>
+                    <span
+                      className={`text-lg font-bold font-mono ${
+                        positive ? "text-positive" : "text-negative"
+                      }`}
+                    >
+                      {formatPercent(h.returnRate)}
+                    </span>
+                  </div>
+
                   <div
                     className={`text-sm text-center py-2 px-3 rounded-lg ${
                       positive ? "bg-positive-bg" : "bg-negative-bg"
