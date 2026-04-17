@@ -118,14 +118,14 @@ export default async function Home() {
   const memberList = getMembers();
   const memberCount = memberList.length;
   const rate = exchangeRate || 1;
-  const depositUSDtoKRW = Math.round(depositUSD * rate); // 외화 예수금 → 원화 환산
-  const totalValueKRW = Math.round(totalValue * rate); // 주식 평가금 원화
-  const totalAssetKRW = depositKRW + depositUSDtoKRW + totalValueKRW; // 총 자산
+  const depositUSDtoKRW = Math.round(depositUSD * rate);
+  const totalValueKRW = Math.round(totalValue * rate);
+  const totalAssetKRW = depositKRW + depositUSDtoKRW + totalValueKRW;
+  const totalContributed = memberList.reduce((s, m) => s + m.totalContributed, 0);
   const returnRate =
-    totalInvested > 0
-      ? ((totalValue - totalInvested) / totalInvested) * 100
+    totalContributed > 0
+      ? ((totalAssetKRW - totalContributed) / totalContributed) * 100
       : 0;
-  const returnAmount = totalValue - totalInvested;
   const isPositive = returnRate >= 0;
   const perPersonValue =
     memberCount > 0 ? Math.round(totalAssetKRW / memberCount) : 0;
@@ -163,7 +163,7 @@ export default async function Home() {
         {/* 핵심 지표 카드 */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
           <StatCard label="총 자산" value={formatKRW(totalAssetKRW)} />
-          <StatCard label="주식 평가금" value={formatKRW(totalValueKRW)} />
+          <StatCard label="총 납입금" value={formatKRW(totalContributed)} />
           <StatCard
             label="수익률"
             value={formatPercent(returnRate)}
