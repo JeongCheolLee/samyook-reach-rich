@@ -188,18 +188,26 @@ export default async function Home() {
         />
 
         {/* 핵심 지표 카드 */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
           <StatCard
             label="총 납입금"
             value={formatKRW(totalContributed)}
-            tooltip={[
-              `예수금 총합: ${formatKRW(depositUSDtoKRW + depositKRW)}`,
-              `달러: ${formatUSD(depositUSD)}`,
-              `원화: ${formatKRW(depositKRW)}`,
-            ]}
           />
           <StatCard label="투자금액" value={formatKRW(totalContributed - depositUSDtoKRW - depositKRW)} />
-          <StatCard label="평가금" value={formatKRW(totalValueKRW)} />
+          <StatCard
+            label="총 자산"
+            value={formatKRW(totalAssetKRW)}
+            tooltip={[
+              `평가금: ${formatKRW(totalValueKRW)}`,
+              `예수금(달러): ${formatUSD(depositUSD)} (${formatKRW(depositUSDtoKRW)})`,
+              `예수금(원화): ${formatKRW(depositKRW)}`,
+            ]}
+          />
+          <StatCard
+            label="손익"
+            value={formatKRW(totalAssetKRW - totalContributed)}
+            color={isPositive ? "positive" : "negative"}
+          />
           <StatCard
             label="수익률"
             value={formatPercent(returnRate)}
