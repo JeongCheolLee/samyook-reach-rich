@@ -171,7 +171,7 @@ export default async function Home() {
               `원화: ${formatKRW(depositKRW)}`,
             ]}
           />
-          <StatCard label="투자금액" value={formatKRW(Math.round(totalInvested * rate))} />
+          <StatCard label="투자금액" value={formatKRW(totalContributed - depositUSDtoKRW - depositKRW)} />
           <StatCard label="평가금" value={formatKRW(totalValueKRW)} />
           <StatCard
             label="수익률"
