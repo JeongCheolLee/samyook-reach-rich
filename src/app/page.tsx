@@ -161,22 +161,22 @@ export default async function Home() {
         />
 
         {/* 핵심 지표 카드 */}
-        <div className="grid grid-cols-3 gap-4 sm:grid-cols-6">
-          <StatCard label="총 자산" value={formatKRW(totalAssetKRW)} />
-          <StatCard label="총 납입금" value={formatKRW(totalContributed)} />
-          <StatCard label="주식 평가금" value={formatKRW(totalValueKRW)} />
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard
+            label="총 납입금"
+            value={formatKRW(totalContributed)}
+            tooltip={[
+              `예수금 총합: ${formatKRW(depositUSDtoKRW + depositKRW)}`,
+              `달러: ${formatUSD(depositUSD)}`,
+              `원화: ${formatKRW(depositKRW)}`,
+            ]}
+          />
+          <StatCard label="투자금액" value={formatKRW(Math.round(totalInvested * rate))} />
+          <StatCard label="평가금" value={formatKRW(totalValueKRW)} />
           <StatCard
             label="수익률"
             value={formatPercent(returnRate)}
             color={isPositive ? "positive" : "negative"}
-          />
-          <StatCard
-            label="달러 잔고"
-            value={formatUSD(depositUSD)}
-          />
-          <StatCard
-            label="원화 잔고"
-            value={formatKRW(depositKRW)}
           />
         </div>
 
@@ -320,13 +320,15 @@ function StatCard({
   label,
   value,
   color,
+  tooltip,
 }: {
   label: string;
   value: string;
   color?: "positive" | "negative";
+  tooltip?: string[];
 }) {
   return (
-    <div className="rounded-xl border border-card-border bg-card p-4">
+    <div className="rounded-xl border border-card-border bg-card p-4 relative group">
       <div className="text-xs text-muted mb-1">{label}</div>
       <div
         className={`text-lg font-semibold tracking-tight ${
@@ -339,6 +341,15 @@ function StatCard({
       >
         {value}
       </div>
+      {tooltip && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-card-border bg-card p-3 shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity">
+          {tooltip.map((line, i) => (
+            <div key={i} className="text-xs text-muted font-mono whitespace-nowrap">
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
