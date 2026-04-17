@@ -161,9 +161,10 @@ export default async function Home() {
         />
 
         {/* 핵심 지표 카드 */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
+        <div className="grid grid-cols-3 gap-4 sm:grid-cols-6">
           <StatCard label="총 자산" value={formatKRW(totalAssetKRW)} />
           <StatCard label="총 납입금" value={formatKRW(totalContributed)} />
+          <StatCard label="주식 평가금" value={formatKRW(totalValueKRW)} />
           <StatCard
             label="수익률"
             value={formatPercent(returnRate)}
