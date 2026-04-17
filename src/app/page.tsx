@@ -90,7 +90,7 @@ export default async function Home() {
       avgPrice: Number(h.pchs_avg_pric || 0),
       currentPrice: Number(h.now_pric2 || 0),
       totalValue: Number(h.ovrs_stck_evlu_amt || 0),
-      totalCost: Number(h.pchs_amt || 0),
+      totalCost: Number(h.pchs_amt || 0) || Number(h.pchs_avg_pric || 0) * Number(h.ovrs_cblc_qty || 0),
       returnRate: Number(h.evlu_pfls_rt || 0),
     }));
 
