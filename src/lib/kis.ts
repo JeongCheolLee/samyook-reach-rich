@@ -22,14 +22,30 @@ async function loadTokenFromBlob(): Promise<{
 } | null> {
   try {
     const blob = await head(TOKEN_BLOB_KEY);
-    if (!blob) return null;
+    if (!blob) {
+      console.log("[KIS_TOKEN] loadFromBlob: head() returned falsy");
+      return null;
+    }
     const res = await fetch(blob.url);
+    if (!res.ok) {
+      console.log(
+        `[KIS_TOKEN] loadFromBlob: fetch ${res.status} url=${blob.url}`
+      );
+      return null;
+    }
     const data = await res.json();
+    const remainingMs =
+      typeof data?.expiresAt === "number" ? data.expiresAt - Date.now() : null;
+    console.log(
+      `[KIS_TOKEN] loadFromBlob: hasToken=${!!data?.token} remainingMs=${remainingMs} uploadedAt=${blob.uploadedAt}`
+    );
     if (data.token && data.expiresAt && Date.now() < data.expiresAt) {
       return data;
     }
-  } catch {
-    // Blob 없거나 읽기 실패
+  } catch (e) {
+    console.log(
+      `[KIS_TOKEN] loadFromBlob: error ${(e as Error).name}: ${(e as Error).message}`
+    );
   }
   return null;
 }
@@ -37,12 +53,21 @@ async function loadTokenFromBlob(): Promise<{
 /** Blob에 토큰 저장 */
 async function saveTokenToBlob(token: string, expiresAt: number) {
   try {
-    await put(TOKEN_BLOB_KEY, JSON.stringify({ token, expiresAt }), {
-      access: "public",
-      addRandomSuffix: false,
-    });
-  } catch {
-    // 저장 실패해도 메모리 캐시로 동작
+    const result = await put(
+      TOKEN_BLOB_KEY,
+      JSON.stringify({ token, expiresAt }),
+      {
+        access: "public",
+        addRandomSuffix: false,
+      }
+    );
+    console.log(
+      `[KIS_TOKEN] saveToBlob: ok url=${result.url} expiresAt=${new Date(expiresAt).toISOString()}`
+    );
+  } catch (e) {
+    console.error(
+      `[KIS_TOKEN] saveToBlob: failed ${(e as Error).name}: ${(e as Error).message}`
+    );
   }
 }
 
@@ -50,21 +75,29 @@ async function saveTokenToBlob(token: string, expiresAt: number) {
 async function getAccessToken(): Promise<string> {
   // 1. 메모리 캐시 확인
   if (cachedToken && Date.now() < cachedToken.expiresAt) {
+    console.log(
+      `[KIS_TOKEN] source=memory remainingMs=${cachedToken.expiresAt - Date.now()}`
+    );
     return cachedToken.token;
   }
 
   // 2. Blob에서 읽기 (콜드 스타트 시)
   const blobToken = await loadTokenFromBlob();
   if (blobToken) {
+    console.log(
+      `[KIS_TOKEN] source=blob remainingMs=${blobToken.expiresAt - Date.now()}`
+    );
     cachedToken = blobToken;
     return blobToken.token;
   }
 
   // 3. 새로 발급 (락으로 동시 요청 방지)
   if (tokenPromise) {
+    console.log("[KIS_TOKEN] source=inflight (waiting for existing fetch)");
     return tokenPromise;
   }
 
+  console.log("[KIS_TOKEN] source=new (calling KIS /oauth2/tokenP)");
   tokenPromise = fetchToken();
   try {
     return await tokenPromise;
@@ -86,11 +119,15 @@ async function fetchToken(): Promise<string> {
 
   if (!res.ok) {
     const text = await res.text();
+    console.error(`[KIS_TOKEN] fetchToken failed: ${res.status} ${text}`);
     throw new Error(`Token 발급 실패: ${res.status} ${text}`);
   }
 
   const data = await res.json();
   const expiresAt = Date.now() + (data.expires_in - 3600) * 1000;
+  console.log(
+    `[KIS_TOKEN] fetchToken ok: expires_in=${data.expires_in} computedExpiresAt=${new Date(expiresAt).toISOString()}`
+  );
   cachedToken = { token: data.access_token, expiresAt };
 
   // Blob에 영구 저장 (다음 콜드 스타트에서 재사용)
