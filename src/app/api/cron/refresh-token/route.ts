@@ -12,16 +12,12 @@ const CRON_SECRET = process.env.CRON_SECRET;
 export const dynamic = "force-dynamic";
 
 async function isAuthorized(req: NextRequest) {
-  // 1. CRON_SECRET이 설정돼 있으면 우선 검증 (권장)
+  // Vercel Cron (Authorization: Bearer $CRON_SECRET)
   if (CRON_SECRET) {
     const auth = req.headers.get("authorization");
     if (auth === `Bearer ${CRON_SECRET}`) return true;
   }
-  // 2. Vercel Cron 기본 UA (CRON_SECRET 미설정 시 fallback)
-  //    UA는 위조 가능하지만 KIS 1분당 1회 제한이 1차 방어막
-  const ua = req.headers.get("user-agent") || "";
-  if (ua.startsWith("vercel-cron/")) return true;
-  // 3. Admin 쿠키 (수동 트리거 버튼)
+  // Admin 쿠키 (수동 트리거 버튼)
   const cookieStore = await cookies();
   if (cookieStore.get("admin_token")?.value === ADMIN_TOKEN) return true;
   return false;
