@@ -233,14 +233,6 @@ export async function clearTokenLog() {
   });
 }
 
-/** Cron/수동 트리거용: 캐시 무시하고 강제로 새 토큰 발급 + Blob 저장 */
-export async function forceRefreshToken(): Promise<string> {
-  await writeLog("forceRefreshToken: invoked");
-  cachedToken = null;
-  tokenPromise = null;
-  return fetchToken();
-}
-
 /** 공통 GET 호출 헬퍼 */
 async function kisGet(
   path: string,
