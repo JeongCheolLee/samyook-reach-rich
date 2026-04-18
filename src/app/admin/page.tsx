@@ -180,12 +180,6 @@ export default function AdminPage() {
             <a href="/" className="text-sm text-accent hover:underline">
               대시보드
             </a>
-            <a
-              href="/admin/kis-log"
-              className="text-sm text-accent hover:underline"
-            >
-              토큰로그
-            </a>
             <button
               onClick={logout}
               className="text-sm text-muted hover:text-negative"

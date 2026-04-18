@@ -9,42 +9,11 @@ const CANO = process.env.KIS_ACCOUNT_NO!;
 const ACNT_PRDT_CD = process.env.KIS_ACCOUNT_PRDT!;
 
 const TOKEN_BLOB_KEY = "kis-token.json";
-const LOG_BLOB_KEY = "kis-token-log.json";
-const MAX_LOG_EVENTS = 200;
 
 // 메모리 캐시 (웜 스타트 시 재사용)
 let cachedToken: { token: string; expiresAt: number } | null = null;
 // 동시 요청 시 토큰 발급을 1번만 하기 위한 락
 let tokenPromise: Promise<string> | null = null;
-
-type LogEvent = { ts: number; msg: string };
-
-/** Blob 로그에 이벤트 추가 (읽기→병합→쓰기, 동시성은 감수) */
-async function writeLog(msg: string) {
-  console.log(`[KIS_TOKEN] ${msg}`);
-  const event: LogEvent = { ts: Date.now(), msg };
-  try {
-    let existing: LogEvent[] = [];
-    try {
-      const blob = await head(LOG_BLOB_KEY);
-      const res = await fetch(blob.url, { cache: "no-store" });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) existing = data;
-      }
-    } catch {
-      // 로그 파일 없음 — 처음 기록
-    }
-    const combined = [...existing, event].slice(-MAX_LOG_EVENTS);
-    await put(LOG_BLOB_KEY, JSON.stringify(combined), {
-      access: "public",
-      addRandomSuffix: false,
-      cacheControlMaxAge: 0,
-    });
-  } catch {
-    // 로그 쓰기 실패는 무시 (콘솔에는 남음)
-  }
-}
 
 /** Blob에서 저장된 토큰 읽기 */
 async function loadTokenFromBlob(): Promise<{
@@ -53,28 +22,14 @@ async function loadTokenFromBlob(): Promise<{
 } | null> {
   try {
     const blob = await head(TOKEN_BLOB_KEY);
-    if (!blob) {
-      await writeLog("loadFromBlob: head() returned falsy");
-      return null;
-    }
-    const res = await fetch(blob.url, { cache: "no-store" });
-    if (!res.ok) {
-      await writeLog(`loadFromBlob: fetch ${res.status} url=${blob.url}`);
-      return null;
-    }
+    if (!blob) return null;
+    const res = await fetch(blob.url);
     const data = await res.json();
-    const remainingMs =
-      typeof data?.expiresAt === "number" ? data.expiresAt - Date.now() : null;
-    await writeLog(
-      `loadFromBlob: hasToken=${!!data?.token} remainingMs=${remainingMs} uploadedAt=${blob.uploadedAt}`
-    );
     if (data.token && data.expiresAt && Date.now() < data.expiresAt) {
       return data;
     }
-  } catch (e) {
-    await writeLog(
-      `loadFromBlob: error ${(e as Error).name}: ${(e as Error).message}`
-    );
+  } catch {
+    // Blob 없거나 읽기 실패
   }
   return null;
 }
@@ -82,52 +37,34 @@ async function loadTokenFromBlob(): Promise<{
 /** Blob에 토큰 저장 */
 async function saveTokenToBlob(token: string, expiresAt: number) {
   try {
-    const result = await put(
-      TOKEN_BLOB_KEY,
-      JSON.stringify({ token, expiresAt }),
-      {
-        access: "public",
-        addRandomSuffix: false,
-        cacheControlMaxAge: 0,
-      }
-    );
-    await writeLog(
-      `saveToBlob: ok url=${result.url} expiresAt=${new Date(expiresAt).toISOString()}`
-    );
-  } catch (e) {
-    await writeLog(
-      `saveToBlob: failed ${(e as Error).name}: ${(e as Error).message}`
-    );
+    await put(TOKEN_BLOB_KEY, JSON.stringify({ token, expiresAt }), {
+      access: "public",
+      addRandomSuffix: false,
+    });
+  } catch {
+    // 저장 실패해도 메모리 캐시로 동작
   }
 }
 
 /** Access Token 발급 (24시간 유효, 동시 요청 시 1회만 발급, Blob 영구 저장) */
 async function getAccessToken(): Promise<string> {
-  // 1. 메모리 캐시 확인 (너무 빈번해서 Blob 로그에는 기록 안 함)
+  // 1. 메모리 캐시 확인
   if (cachedToken && Date.now() < cachedToken.expiresAt) {
-    console.log(
-      `[KIS_TOKEN] source=memory remainingMs=${cachedToken.expiresAt - Date.now()}`
-    );
     return cachedToken.token;
   }
 
   // 2. Blob에서 읽기 (콜드 스타트 시)
   const blobToken = await loadTokenFromBlob();
   if (blobToken) {
-    await writeLog(
-      `source=blob remainingMs=${blobToken.expiresAt - Date.now()}`
-    );
     cachedToken = blobToken;
     return blobToken.token;
   }
 
   // 3. 새로 발급 (락으로 동시 요청 방지)
   if (tokenPromise) {
-    await writeLog("source=inflight (waiting for existing fetch)");
     return tokenPromise;
   }
 
-  await writeLog("source=new (calling KIS /oauth2/tokenP)");
   tokenPromise = fetchToken();
   try {
     return await tokenPromise;
@@ -149,88 +86,17 @@ async function fetchToken(): Promise<string> {
 
   if (!res.ok) {
     const text = await res.text();
-    await writeLog(`fetchToken failed: ${res.status} ${text}`);
     throw new Error(`Token 발급 실패: ${res.status} ${text}`);
   }
 
   const data = await res.json();
   const expiresAt = Date.now() + (data.expires_in - 3600) * 1000;
-  await writeLog(
-    `fetchToken ok: expires_in=${data.expires_in} computedExpiresAt=${new Date(expiresAt).toISOString()}`
-  );
   cachedToken = { token: data.access_token, expiresAt };
 
   // Blob에 영구 저장 (다음 콜드 스타트에서 재사용)
   await saveTokenToBlob(data.access_token, expiresAt);
 
   return cachedToken.token;
-}
-
-/** 진단용: 현재 토큰 상태 + Blob 로그 읽기 */
-export async function getTokenDiagnostics() {
-  const memory = cachedToken
-    ? {
-        hasToken: true,
-        expiresAt: cachedToken.expiresAt,
-        remainingMs: cachedToken.expiresAt - Date.now(),
-      }
-    : { hasToken: false };
-
-  let blob: {
-    hasToken: boolean;
-    expiresAt?: number;
-    remainingMs?: number;
-    uploadedAt?: string;
-    url?: string;
-    error?: string;
-  } = { hasToken: false };
-  try {
-    const h = await head(TOKEN_BLOB_KEY);
-    const res = await fetch(h.url, { cache: "no-store" });
-    if (res.ok) {
-      const data = await res.json();
-      blob = {
-        hasToken: !!data?.token,
-        expiresAt: data?.expiresAt,
-        remainingMs:
-          typeof data?.expiresAt === "number"
-            ? data.expiresAt - Date.now()
-            : undefined,
-        uploadedAt:
-          typeof h.uploadedAt === "string"
-            ? h.uploadedAt
-            : h.uploadedAt?.toISOString(),
-        url: h.url,
-      };
-    } else {
-      blob = { hasToken: false, error: `fetch ${res.status}` };
-    }
-  } catch (e) {
-    blob = { hasToken: false, error: (e as Error).message };
-  }
-
-  let events: LogEvent[] = [];
-  try {
-    const h = await head(LOG_BLOB_KEY);
-    const res = await fetch(h.url, { cache: "no-store" });
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data)) events = data;
-    }
-  } catch {
-    // 로그 없음
-  }
-
-  return { memory, blob, events };
-}
-
-/** 진단용: Blob 로그 초기화 */
-export async function clearTokenLog() {
-  await put(LOG_BLOB_KEY, JSON.stringify([]), {
-    access: "public",
-    addRandomSuffix: false,
-    cacheControlMaxAge: 0,
-  });
 }
 
 /** 공통 GET 호출 헬퍼 */
