@@ -43,6 +43,8 @@ export default function KisLogPage() {
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,6 +77,26 @@ export default function KisLogPage() {
     if (!confirm("로그를 모두 지울까요?")) return;
     await fetch("/api/debug/kis-log", { method: "DELETE" });
     load();
+  }
+
+  async function forceRefresh() {
+    if (!confirm("KIS 토큰을 지금 강제로 새로 받을까요?")) return;
+    setRefreshing(true);
+    setRefreshMsg("");
+    try {
+      const res = await fetch("/api/cron/refresh-token");
+      const json = await res.json();
+      if (json.success) {
+        setRefreshMsg(`OK · ${json.tokenPreview}`);
+      } else {
+        setRefreshMsg(`실패: ${json.error}`);
+      }
+    } catch (e) {
+      setRefreshMsg(`에러: ${(e as Error).message}`);
+    } finally {
+      setRefreshing(false);
+      load();
+    }
   }
 
   async function copyAll() {
@@ -168,7 +190,21 @@ export default function KisLogPage() {
         {data && (
           <>
             <section className="rounded-xl border border-card-border bg-card p-4 mb-4">
-              <div className="text-sm font-semibold mb-2">현재 상태</div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-semibold">현재 상태</div>
+                <button
+                  onClick={forceRefresh}
+                  disabled={refreshing}
+                  className="h-8 px-3 rounded-lg bg-accent text-white text-xs font-medium disabled:opacity-50"
+                >
+                  {refreshing ? "갱신 중..." : "토큰 즉시 갱신"}
+                </button>
+              </div>
+              {refreshMsg && (
+                <div className="mb-3 text-xs font-mono text-muted break-all">
+                  {refreshMsg}
+                </div>
+              )}
               <div className="grid grid-cols-1 gap-2 text-xs font-mono">
                 <div className="flex justify-between gap-2">
                   <span className="text-muted">memory.hasToken</span>
