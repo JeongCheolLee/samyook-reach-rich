@@ -125,7 +125,7 @@ export function DestinationProgress({
         {tiers.map((tier, i) => {
           const tierVal = tier.threshold * 10_000;
           const isDone = perPersonValue >= tierVal;
-          const isNow = i === currentAchievedIdx;
+          const isNow = i === nextTargetIdx;
           const isViewing = i === viewIdx;
 
           return (
