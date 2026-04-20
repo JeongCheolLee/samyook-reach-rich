@@ -14,15 +14,20 @@ export function DestinationProgress({
   perPersonValue: number;
   memberCount: number;
 }) {
-  const { current } = getCurrentTier(perPersonValue);
+  const { current, next } = getCurrentTier(perPersonValue);
 
   const tiers = destinationTiers.slice(1);
-  const currentIdx = tiers.findIndex(
-    (t) => t.destination === current.destination
-  );
-  const activeTierIdx = currentIdx === -1 ? 0 : currentIdx;
+  // 달성한 티어 (0="손절"은 미달성 취급)
+  const currentAchievedIdx =
+    current.threshold > 0
+      ? tiers.findIndex((t) => t.destination === current.destination)
+      : -1;
+  // 초기 뷰는 다음 목표 티어. 모두 달성했으면 마지막 티어 유지
+  const nextTargetIdx = next
+    ? tiers.findIndex((t) => t.destination === next.destination)
+    : Math.max(0, currentAchievedIdx);
 
-  const [viewIdx, setViewIdx] = useState(activeTierIdx);
+  const [viewIdx, setViewIdx] = useState(nextTargetIdx);
   const [animatedPercent, setAnimatedPercent] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
 
@@ -120,7 +125,7 @@ export function DestinationProgress({
         {tiers.map((tier, i) => {
           const tierVal = tier.threshold * 10_000;
           const isDone = perPersonValue >= tierVal;
-          const isNow = i === activeTierIdx;
+          const isNow = i === currentAchievedIdx;
           const isViewing = i === viewIdx;
 
           return (
