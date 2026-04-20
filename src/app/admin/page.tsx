@@ -250,14 +250,9 @@ export default function AdminPage() {
                   </select>
                   <span className="text-sm font-medium flex-1">{m.name}</span>
                   <div className="flex items-center gap-1">
-                    <input
-                      type="number"
+                    <ContributionInput
                       value={m.totalContributed}
-                      onChange={(e) =>
-                        updateContribution(m.name, Number(e.target.value))
-                      }
-                      step={50000}
-                      className="w-28 h-8 px-2 text-right text-sm rounded border border-card-border bg-background font-mono"
+                      onCommit={(v) => updateContribution(m.name, v)}
                     />
                     <span className="text-xs text-muted">원</span>
                   </div>
@@ -287,5 +282,39 @@ export default function AdminPage() {
         )}
       </main>
     </div>
+  );
+}
+
+function ContributionInput({
+  value,
+  onCommit,
+}: {
+  value: number;
+  onCommit: (v: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  function commit() {
+    const n = Number(draft);
+    if (!Number.isFinite(n) || n === value) return;
+    onCommit(n);
+  }
+
+  return (
+    <input
+      type="number"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+      step={50000}
+      className="w-28 h-8 px-2 text-right text-sm rounded border border-card-border bg-background font-mono"
+    />
   );
 }
