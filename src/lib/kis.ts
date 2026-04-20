@@ -1,6 +1,6 @@
 // 한국투자증권 Open API 클라이언트 (실전투자)
 
-import { put, head } from "@vercel/blob";
+import { Redis } from "@upstash/redis";
 
 const BASE_URL = process.env.KIS_BASE_URL!;
 const APP_KEY = process.env.KIS_APP_KEY!;
@@ -8,68 +8,67 @@ const APP_SECRET = process.env.KIS_APP_SECRET!;
 const CANO = process.env.KIS_ACCOUNT_NO!;
 const ACNT_PRDT_CD = process.env.KIS_ACCOUNT_PRDT!;
 
-const TOKEN_BLOB_KEY = "kis-token.json";
+const TOKEN_KEY = "kis:access_token";
+const TOKEN_LOCK_KEY = "kis:access_token:lock";
+
+const redis = new Redis({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
+
+type StoredToken = { token: string; expiresAt: number };
 
 // 메모리 캐시 (웜 스타트 시 재사용)
-let cachedToken: { token: string; expiresAt: number } | null = null;
-// 동시 요청 시 토큰 발급을 1번만 하기 위한 락
+let cachedToken: StoredToken | null = null;
+// 동일 인스턴스 내 동시 요청 중복 발급 방지
 let tokenPromise: Promise<string> | null = null;
 
-/** Blob에서 저장된 토큰 읽기 */
-async function loadTokenFromBlob(): Promise<{
-  token: string;
-  expiresAt: number;
-} | null> {
-  try {
-    const blob = await head(TOKEN_BLOB_KEY);
-    if (!blob) return null;
-    const res = await fetch(blob.url);
-    const data = await res.json();
-    if (data.token && data.expiresAt && Date.now() < data.expiresAt) {
-      return data;
-    }
-  } catch {
-    // Blob 없거나 읽기 실패
-  }
-  return null;
-}
-
-/** Blob에 토큰 저장 */
-async function saveTokenToBlob(token: string, expiresAt: number) {
-  try {
-    await put(TOKEN_BLOB_KEY, JSON.stringify({ token, expiresAt }), {
-      access: "public",
-      addRandomSuffix: false,
-    });
-  } catch {
-    // 저장 실패해도 메모리 캐시로 동작
-  }
-}
-
-/** Access Token 발급 (24시간 유효, 동시 요청 시 1회만 발급, Blob 영구 저장) */
+/** Access Token 발급
+ *  우선순위: 메모리 → Redis → KIS 재발급
+ *  Redis 분산 락으로 여러 서버리스 인스턴스의 동시 재발급을 방지 (KIS 1분 1회 제한 회피)
+ */
 async function getAccessToken(): Promise<string> {
-  // 1. 메모리 캐시 확인
   if (cachedToken && Date.now() < cachedToken.expiresAt) {
     return cachedToken.token;
   }
 
-  // 2. Blob에서 읽기 (콜드 스타트 시)
-  const blobToken = await loadTokenFromBlob();
-  if (blobToken) {
-    cachedToken = blobToken;
-    return blobToken.token;
+  const stored = await redis.get<StoredToken>(TOKEN_KEY);
+  if (stored && Date.now() < stored.expiresAt) {
+    cachedToken = stored;
+    return stored.token;
   }
 
-  // 3. 새로 발급 (락으로 동시 요청 방지)
-  if (tokenPromise) {
-    return tokenPromise;
-  }
+  if (tokenPromise) return tokenPromise;
 
-  tokenPromise = fetchToken();
+  tokenPromise = acquireLockAndFetch();
   try {
     return await tokenPromise;
   } finally {
     tokenPromise = null;
+  }
+}
+
+async function acquireLockAndFetch(): Promise<string> {
+  // SET NX EX 60 → 60초 락
+  const gotLock = await redis.set(TOKEN_LOCK_KEY, "1", { nx: true, ex: 60 });
+
+  if (!gotLock) {
+    // 다른 인스턴스가 발급 중 → 잠시 기다렸다가 Redis 재조회
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const stored = await redis.get<StoredToken>(TOKEN_KEY);
+      if (stored && Date.now() < stored.expiresAt) {
+        cachedToken = stored;
+        return stored.token;
+      }
+    }
+    // 끝내 못 받으면 내가 시도
+  }
+
+  try {
+    return await fetchToken();
+  } finally {
+    await redis.del(TOKEN_LOCK_KEY);
   }
 }
 
@@ -93,8 +92,8 @@ async function fetchToken(): Promise<string> {
   const expiresAt = Date.now() + (data.expires_in - 3600) * 1000;
   cachedToken = { token: data.access_token, expiresAt };
 
-  // Blob에 영구 저장 (다음 콜드 스타트에서 재사용)
-  await saveTokenToBlob(data.access_token, expiresAt);
+  const ttlSeconds = Math.max(60, Math.floor((expiresAt - Date.now()) / 1000));
+  await redis.set(TOKEN_KEY, cachedToken, { ex: ttlSeconds });
 
   return cachedToken.token;
 }
