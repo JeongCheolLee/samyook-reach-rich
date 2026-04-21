@@ -27,15 +27,19 @@ let tokenPromise: Promise<string> | null = null;
  *  우선순위: 메모리 → Redis → KIS 재발급
  *  Redis 분산 락으로 여러 서버리스 인스턴스의 동시 재발급을 방지 (KIS 1분 1회 제한 회피)
  */
-async function getAccessToken(): Promise<string> {
-  if (cachedToken && Date.now() < cachedToken.expiresAt) {
-    return cachedToken.token;
-  }
+async function getAccessToken(forceRefresh = false): Promise<string> {
+  if (forceRefresh) {
+    cachedToken = null;
+  } else {
+    if (cachedToken && Date.now() < cachedToken.expiresAt) {
+      return cachedToken.token;
+    }
 
-  const stored = await redis.get<StoredToken>(TOKEN_KEY);
-  if (stored && Date.now() < stored.expiresAt) {
-    cachedToken = stored;
-    return stored.token;
+    const stored = await redis.get<StoredToken>(TOKEN_KEY);
+    if (stored && Date.now() < stored.expiresAt) {
+      cachedToken = stored;
+      return stored.token;
+    }
   }
 
   if (tokenPromise) return tokenPromise;
@@ -48,21 +52,42 @@ async function getAccessToken(): Promise<string> {
   }
 }
 
+/** 캐시된 토큰 강제 무효화 (401 복구용) */
+async function invalidateToken(): Promise<void> {
+  cachedToken = null;
+  try {
+    await redis.del(TOKEN_KEY);
+  } catch {
+    // Redis 장애여도 메모리 캐시는 비웠으니 다음 호출에서 재발급 시도
+  }
+}
+
+/** Redis를 주기적으로 폴링해서 다른 인스턴스가 발급한 토큰을 기다림 */
+async function waitForSharedToken(
+  attempts: number,
+  intervalMs: number
+): Promise<string | null> {
+  for (let i = 0; i < attempts; i++) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const stored = await redis.get<StoredToken>(TOKEN_KEY);
+    if (stored && Date.now() < stored.expiresAt) {
+      cachedToken = stored;
+      return stored.token;
+    }
+  }
+  return null;
+}
+
 async function acquireLockAndFetch(): Promise<string> {
   // SET NX EX 60 → 60초 락
   const gotLock = await redis.set(TOKEN_LOCK_KEY, "1", { nx: true, ex: 60 });
 
   if (!gotLock) {
-    // 다른 인스턴스가 발급 중 → 잠시 기다렸다가 Redis 재조회
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      const stored = await redis.get<StoredToken>(TOKEN_KEY);
-      if (stored && Date.now() < stored.expiresAt) {
-        cachedToken = stored;
-        return stored.token;
-      }
-    }
-    // 끝내 못 받으면 내가 시도
+    // 다른 인스턴스가 발급 중 → 최대 10초까지 Redis 폴링
+    const shared = await waitForSharedToken(20, 500);
+    if (shared) return shared;
+    // 끝내 못 받으면 KIS 호출 (남의 락은 건드리지 않음)
+    return fetchToken();
   }
 
   try {
@@ -83,12 +108,34 @@ async function fetchToken(): Promise<string> {
     }),
   });
 
-  if (!res.ok) {
-    const text = await res.text();
+  const text = await res.text();
+  let data: {
+    access_token?: string;
+    expires_in?: number;
+    error_code?: string;
+    error_description?: string;
+  } | null = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = null;
+  }
+
+  // KIS "1분당 1건 발급" 레이트리밋 (EGW00133) → Redis 폴링으로 대기
+  if (
+    data?.error_code === "EGW00133" ||
+    /EGW00133/.test(text) ||
+    /1분당 1건/.test(text)
+  ) {
+    const shared = await waitForSharedToken(20, 500);
+    if (shared) return shared;
+    throw new Error(`Token 발급 레이트리밋 (EGW00133): ${text}`);
+  }
+
+  if (!res.ok || !data?.access_token || !data?.expires_in) {
     throw new Error(`Token 발급 실패: ${res.status} ${text}`);
   }
 
-  const data = await res.json();
   const expiresAt = Date.now() + (data.expires_in - 3600) * 1000;
   cachedToken = { token: data.access_token, expiresAt };
 
@@ -98,13 +145,25 @@ async function fetchToken(): Promise<string> {
   return cachedToken.token;
 }
 
+/** KIS가 돌려주는 "토큰이 죽었다" 계열 에러 판별 */
+function isTokenError(status: number, text: string): boolean {
+  if (status === 401) return true;
+  // EGW00121: 토큰 만료, EGW00123: 토큰 무효 (등 0012x 계열)
+  if (/EGW0012\d/.test(text)) return true;
+  if (/access.?token/i.test(text) && /(expired|invalid|만료|무효)/i.test(text))
+    return true;
+  return false;
+}
+
 /** 공통 GET 호출 헬퍼 */
 async function kisGet(
   path: string,
   trId: string,
-  params: Record<string, string>
-) {
-  const token = await getAccessToken();
+  params: Record<string, string>,
+  retried = false
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  const token = await getAccessToken(retried);
   const url = new URL(path, BASE_URL);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
@@ -120,6 +179,10 @@ async function kisGet(
 
   if (!res.ok) {
     const text = await res.text();
+    if (!retried && isTokenError(res.status, text)) {
+      await invalidateToken();
+      return kisGet(path, trId, params, true);
+    }
     throw new Error(`KIS API 에러 [${trId}]: ${res.status} ${text}`);
   }
 
@@ -130,9 +193,11 @@ async function kisGet(
 async function kisPost(
   path: string,
   trId: string,
-  body: Record<string, string>
-) {
-  const token = await getAccessToken();
+  body: Record<string, string>,
+  retried = false
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  const token = await getAccessToken(retried);
 
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
@@ -148,6 +213,10 @@ async function kisPost(
 
   if (!res.ok) {
     const text = await res.text();
+    if (!retried && isTokenError(res.status, text)) {
+      await invalidateToken();
+      return kisPost(path, trId, body, true);
+    }
     throw new Error(`KIS API 에러 [${trId}]: ${res.status} ${text}`);
   }
 
