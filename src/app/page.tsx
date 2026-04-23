@@ -1,6 +1,6 @@
-import { members } from "@/lib/mock-data";
 import { getOverseasBalance, getOverseasDailyPrice, getOverseasPrice, getDeposit, getKRWDeposit } from "@/lib/kis";
 import { getMembers } from "@/lib/members";
+import { CommentsSection } from "@/components/comments-section";
 import { DestinationProgress } from "@/components/destination-progress";
 import { StockChart } from "@/components/stock-chart";
 
@@ -142,7 +142,7 @@ export default async function Home() {
     apiError = e instanceof Error ? e.message : "Unknown error";
   }
 
-  const memberList = getMembers();
+  const memberList = await getMembers();
   const memberCount = memberList.length;
   const rate = exchangeRate || 1;
   const depositUSDtoKRW = Math.round(depositUSD * rate);
@@ -389,6 +389,9 @@ export default async function Home() {
             차트 데이터가 없습니다
           </section>
         )}
+
+        {/* 방명록 */}
+        <CommentsSection />
       </main>
     </div>
   );
