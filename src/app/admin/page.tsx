@@ -255,6 +255,15 @@ export default function AdminPage() {
                       onCommit={(v) => updateContribution(m.name, v)}
                     />
                     <span className="text-xs text-muted">원</span>
+                    <button
+                      onClick={() =>
+                        updateContribution(m.name, m.totalContributed + 50000)
+                      }
+                      disabled={saving}
+                      className="ml-1 h-8 px-2 rounded bg-accent text-white text-xs font-medium disabled:opacity-50"
+                    >
+                      +5만
+                    </button>
                   </div>
                   <button
                     onClick={() => removeMember(m.name)}
