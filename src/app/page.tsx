@@ -17,18 +17,100 @@ function formatUSD(amount: number) {
   );
 }
 
+const STOCK_COMMENT_TIERS: { min: number; messages: string[] }[] = [
+  {
+    min: 50,
+    messages: [
+      "엔비디아 또 신고가다 유럽 가즈아!!!",
+      "이대로면 강남 입성... 파리 직항 예매각",
+      "Make 삼육 RICH AGAIN!!! 사장님 호출",
+    ],
+  },
+  {
+    min: 30,
+    messages: [
+      "AI 버블 안 터진다에 풀배팅 일본 ㄱㄱ",
+      "이참에 회사 때려치우고 전업할까",
+      "퇴직금 미리 땡겨오자",
+    ],
+  },
+  {
+    min: 20,
+    messages: [
+      "환율이 우릴 부자로 만든다 제주도 각",
+      "퇴근하고 보면 또 올라있다 마법",
+      "이거 실화냐 한 번 더 매수각",
+    ],
+  },
+  {
+    min: 10,
+    messages: [
+      "비트코인은 못 샀지만 삼육은 샀다 해외 가자",
+      "이대로면 내년에 파이어각",
+      "물 들어올 때 노 저어라",
+    ],
+  },
+  {
+    min: 5,
+    messages: [
+      "슬슬 가평 펜션 알아볼까?",
+      "치킨값은 벌었다 일단 시켜",
+      "용돈벌이 수준이지만 기분은 좋다",
+    ],
+  },
+  {
+    min: 0,
+    messages: [
+      "본전 사수 성공... Thank you Trump...",
+      "0이 그렇게 어려웠다",
+      "물려도 본전이면 승리지",
+    ],
+  },
+  {
+    min: -5,
+    messages: [
+      "한 달만 더 존버하면 된다 발산역은 간다",
+      "이 정도는 변동성이지 변동성",
+      "기회 매수 구간이라더라 (진짜로)",
+    ],
+  },
+  {
+    min: -10,
+    messages: [
+      "형 트윗 좀 해라 주가 좀 올려",
+      "라면 끓일 시간이다",
+      "차트 그만 보면 오른다",
+    ],
+  },
+  {
+    min: -20,
+    messages: [
+      "관세 맞은 건 결국 우리 계좌",
+      "물타기가 답이다 (아님)",
+      "이 시점에 매수한 사람만 부자됨",
+    ],
+  },
+  {
+    min: -30,
+    messages: [
+      "영끌 안 한 게 어디냐...",
+      "곱버스 샀어야 했는데",
+      "월급으로 평단 낮추기 도전",
+    ],
+  },
+  {
+    min: -Infinity,
+    messages: [
+      "삼육 해산 위기... You're fired!",
+      "한강 수온 체크할 시간",
+      "다 같이 망하면 망한 거 아니다",
+    ],
+  },
+];
+
 function getStockComment(returnRate: number): string {
-  if (returnRate >= 50) return "MAKE 삼육 GREAT AGAIN!!! 유럽 간다!!!";
-  if (returnRate >= 30) return "트럼프 당선되면 더 오른다 일본 ㄱㄱ";
-  if (returnRate >= 20) return "관세 더 때려라!! 제주도 보인다";
-  if (returnRate >= 10) return "트루스 소셜 깔아야 하나? 해외 가자";
-  if (returnRate >= 5) return "슬슬 가평 펜션 알아볼까?";
-  if (returnRate >= 0) return "본전은 했다... Thank you Trump...";
-  if (returnRate >= -5) return "괜찮아 트럼프는 안 죽어 발산역은 간다";
-  if (returnRate >= -10) return "야 트럼프 트윗 좀 해라 주가 좀 올려";
-  if (returnRate >= -20) return "관세 맞은 건 우리 계좌였다";
-  if (returnRate >= -30) return "트럼프 탄핵해라 진짜";
-  return "삼육 해산 위기... You're fired!";
+  const tier = STOCK_COMMENT_TIERS.find((t) => returnRate >= t.min)!;
+  return tier.messages[Math.floor(Math.random() * tier.messages.length)];
 }
 
 function formatPercent(value: number) {
