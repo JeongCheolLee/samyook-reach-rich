@@ -47,18 +47,24 @@ export function CommentsSection() {
   const [error, setError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // 답글 상태
-  const [replyTo, setReplyTo] = useState<string | null>(null);
-  const [replyText, setReplyText] = useState("");
-  const [replyAuthor, setReplyAuthor] = useState("");
-  // 답글 목록 펼침 상태 (기본: 접힘)
+  // 답글 영역 펼침 상태 (기본: 접힘). 펼치면 답글 목록 + 입력창이 함께 노출.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // 답글 입력 초안 (댓글 id별로 분리 — 여러 개 펼쳐도 섞이지 않게)
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [replyAuthors, setReplyAuthors] = useState<Record<string, string>>({});
 
   function toggleExpanded(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        // 펼칠 때 답글 작성자 기본값 세팅(아직 없으면)
+        setReplyAuthors((a) =>
+          a[id] ? a : { ...a, [id]: author || members[0]?.name || "" }
+        );
+      }
       return next;
     });
   }
@@ -108,8 +114,11 @@ export function CommentsSection() {
   }, [comments]);
 
   async function submit(parentId: string | null) {
-    const who = parentId === null ? author : replyAuthor;
-    const raw = parentId === null ? text : replyText;
+    const who =
+      parentId === null
+        ? author
+        : replyAuthors[parentId] || author || members[0]?.name || "";
+    const raw = parentId === null ? text : replyDrafts[parentId] ?? "";
     const trimmed = raw.trim();
     if (!who || !trimmed || posting) return;
     setPosting(true);
@@ -129,9 +138,8 @@ export function CommentsSection() {
       if (parentId === null) {
         setText("");
       } else {
-        setReplyText("");
-        setReplyTo(null);
-        // 방금 단 답글이 보이도록 부모를 펼침
+        // 초안만 비우고 펼친 상태 유지 → 방금 단 답글이 바로 보임
+        setReplyDrafts((d) => ({ ...d, [parentId]: "" }));
         setExpanded((prev) => new Set(prev).add(parentId));
       }
     } catch {
@@ -238,17 +246,14 @@ export function CommentsSection() {
                       {c.text}
                     </div>
                     <button
-                      onClick={() =>
-                        setReplyTo((prev) => {
-                          if (prev === c.id) return null;
-                          setReplyAuthor(author || members[0]?.name || "");
-                          setReplyText("");
-                          return c.id;
-                        })
-                      }
+                      onClick={() => toggleExpanded(c.id)}
                       className="mt-1 text-xs text-muted hover:text-accent"
                     >
-                      {replyTo === c.id ? "취소" : "답글달기"}
+                      {expanded.has(c.id)
+                        ? "답글 숨기기"
+                        : replies.length > 0
+                        ? `답글 ${replies.length}개 보기`
+                        : "답글달기"}
                     </button>
                   </div>
                   {isAdmin && (
@@ -262,21 +267,11 @@ export function CommentsSection() {
                   )}
                 </div>
 
-                {/* 답글 토글 + 목록 */}
-                {replies.length > 0 && (
-                  <div className="mt-2 ml-8">
-                    <button
-                      onClick={() => toggleExpanded(c.id)}
-                      className="text-xs text-muted hover:text-accent"
-                    >
-                      {expanded.has(c.id)
-                        ? "답글 숨기기"
-                        : `답글 ${replies.length}개 보기`}
-                    </button>
-                    {expanded.has(c.id) && (
-                      <ul className="mt-2 pl-3 border-l border-card-border flex flex-col gap-2">
-                        {replies.map((r) => (
-                      <li key={r.id} className="flex items-start gap-2">
+                {/* 펼치면 답글 목록 + 입력창이 함께 노출 */}
+                {expanded.has(c.id) && (
+                  <div className="mt-2 ml-8 pl-3 border-l border-card-border flex flex-col gap-2">
+                    {replies.map((r) => (
+                      <div key={r.id} className="flex items-start gap-2">
                         <span className="text-base leading-none mt-0.5">
                           {r.icon}
                         </span>
@@ -300,50 +295,53 @@ export function CommentsSection() {
                             삭제
                           </button>
                         )}
-                      </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
+                      </div>
+                    ))}
 
-                {/* 답글 입력창 */}
-                {replyTo === c.id && (
-                  <div className="mt-2 ml-8 pl-3 flex gap-2">
-                    <select
-                      value={replyAuthor}
-                      onChange={(e) => setReplyAuthor(e.target.value)}
-                      disabled={members.length === 0}
-                      className="h-9 px-2 rounded-lg border border-card-border bg-background text-sm"
-                    >
-                      {members.map((m) => (
-                        <option key={m.name} value={m.name}>
-                          {m.icon} {m.name}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      autoFocus
-                      placeholder={`${c.author}에게 답글...`}
-                      value={replyText}
-                      onChange={(e) => setReplyText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          submit(c.id);
+                    {/* 답글 입력창 */}
+                    <div className="flex gap-2 pt-1">
+                      <select
+                        value={replyAuthors[c.id] ?? ""}
+                        onChange={(e) =>
+                          setReplyAuthors((a) => ({ ...a, [c.id]: e.target.value }))
                         }
-                      }}
-                      maxLength={MAX_LEN}
-                      className="flex-1 h-9 px-3 rounded-lg border border-card-border bg-background text-sm"
-                    />
-                    <button
-                      onClick={() => submit(c.id)}
-                      disabled={!replyAuthor || !replyText.trim() || posting}
-                      className="h-9 px-3 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50"
-                    >
-                      {posting ? "..." : "답글"}
-                    </button>
+                        disabled={members.length === 0}
+                        className="h-9 px-2 rounded-lg border border-card-border bg-background text-sm"
+                      >
+                        {members.map((m) => (
+                          <option key={m.name} value={m.name}>
+                            {m.icon} {m.name}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        placeholder={`${c.author}에게 답글...`}
+                        value={replyDrafts[c.id] ?? ""}
+                        onChange={(e) =>
+                          setReplyDrafts((d) => ({ ...d, [c.id]: e.target.value }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            submit(c.id);
+                          }
+                        }}
+                        maxLength={MAX_LEN}
+                        className="flex-1 h-9 px-3 rounded-lg border border-card-border bg-background text-sm"
+                      />
+                      <button
+                        onClick={() => submit(c.id)}
+                        disabled={
+                          !(replyAuthors[c.id] || members[0]?.name) ||
+                          !(replyDrafts[c.id] ?? "").trim() ||
+                          posting
+                        }
+                        className="h-9 px-3 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50"
+                      >
+                        {posting ? "..." : "답글"}
+                      </button>
+                    </div>
                   </div>
                 )}
               </li>
