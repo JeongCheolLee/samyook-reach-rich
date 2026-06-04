@@ -51,6 +51,17 @@ export function CommentsSection() {
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
   const [replyAuthor, setReplyAuthor] = useState("");
+  // 답글 목록 펼침 상태 (기본: 접힘)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleExpanded(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   useEffect(() => {
     let alive = true;
@@ -120,6 +131,8 @@ export function CommentsSection() {
       } else {
         setReplyText("");
         setReplyTo(null);
+        // 방금 단 답글이 보이도록 부모를 펼침
+        setExpanded((prev) => new Set(prev).add(parentId));
       }
     } catch {
       setError("네트워크 오류");
@@ -235,7 +248,7 @@ export function CommentsSection() {
                       }
                       className="mt-1 text-xs text-muted hover:text-accent"
                     >
-                      {replyTo === c.id ? "취소" : "답글"}
+                      {replyTo === c.id ? "취소" : "답글달기"}
                     </button>
                   </div>
                   {isAdmin && (
@@ -249,10 +262,20 @@ export function CommentsSection() {
                   )}
                 </div>
 
-                {/* 답글 목록 */}
+                {/* 답글 토글 + 목록 */}
                 {replies.length > 0 && (
-                  <ul className="mt-2 ml-8 pl-3 border-l border-card-border flex flex-col gap-2">
-                    {replies.map((r) => (
+                  <div className="mt-2 ml-8">
+                    <button
+                      onClick={() => toggleExpanded(c.id)}
+                      className="text-xs text-muted hover:text-accent"
+                    >
+                      {expanded.has(c.id)
+                        ? "답글 숨기기"
+                        : `답글 ${replies.length}개 보기`}
+                    </button>
+                    {expanded.has(c.id) && (
+                      <ul className="mt-2 pl-3 border-l border-card-border flex flex-col gap-2">
+                        {replies.map((r) => (
                       <li key={r.id} className="flex items-start gap-2">
                         <span className="text-base leading-none mt-0.5">
                           {r.icon}
@@ -278,8 +301,10 @@ export function CommentsSection() {
                           </button>
                         )}
                       </li>
-                    ))}
-                  </ul>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 )}
 
                 {/* 답글 입력창 */}
@@ -328,15 +353,7 @@ export function CommentsSection() {
       )}
 
       <div className="px-6 py-3 border-t border-card-border text-[11px] text-muted opacity-60">
-        IP 위치 데이터{" "}
-        <a
-          href="https://ipwho.is"
-          target="_blank"
-          rel="noreferrer"
-          className="underline"
-        >
-          ipwho.is
-        </a>
+        접속 지역·통신사는 IP 기반 추정치라 실제와 다를 수 있어요
       </div>
     </section>
   );
