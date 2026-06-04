@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Member } from "@/lib/mock-data";
 
 interface Comment {
@@ -9,6 +9,12 @@ interface Comment {
   icon: string;
   text: string;
   createdAt: number;
+  parentId: string | null;
+  ip: string | null;
+  ua: string | null;
+  device: string | null;
+  geo: string | null;
+  isp: string | null;
 }
 
 const MAX_LEN = 500;
@@ -26,6 +32,11 @@ function formatTime(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// 접속 정보 라벨: "iPhone · Safari · Seoul · KT" (없는 값은 생략)
+function accessInfo(c: Comment): string {
+  return [c.device, c.geo, c.isp].filter(Boolean).join(" · ");
+}
+
 export function CommentsSection() {
   const [members, setMembers] = useState<Member[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -35,6 +46,10 @@ export function CommentsSection() {
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
+
+  // 답글 상태
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -61,8 +76,28 @@ export function CommentsSection() {
     };
   }, []);
 
-  async function submit() {
-    const trimmed = text.trim();
+  // 부모(최상위) 댓글: 최신순 유지. 답글: 부모별로 묶어 오래된 순.
+  const { roots, repliesByParent } = useMemo(() => {
+    const roots: Comment[] = [];
+    const repliesByParent = new Map<string, Comment[]>();
+    for (const c of comments) {
+      if (c.parentId) {
+        const arr = repliesByParent.get(c.parentId) ?? [];
+        arr.push(c);
+        repliesByParent.set(c.parentId, arr);
+      } else {
+        roots.push(c);
+      }
+    }
+    for (const arr of repliesByParent.values()) {
+      arr.sort((a, b) => a.createdAt - b.createdAt);
+    }
+    return { roots, repliesByParent };
+  }, [comments]);
+
+  async function submit(parentId: string | null) {
+    const raw = parentId === null ? text : replyText;
+    const trimmed = raw.trim();
     if (!author || !trimmed || posting) return;
     setPosting(true);
     setError("");
@@ -70,7 +105,7 @@ export function CommentsSection() {
       const res = await fetch("/api/comments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ author, text: trimmed }),
+        body: JSON.stringify({ author, text: trimmed, parentId }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -78,7 +113,12 @@ export function CommentsSection() {
         return;
       }
       setComments((prev) => [data, ...prev]);
-      setText("");
+      if (parentId === null) {
+        setText("");
+      } else {
+        setReplyText("");
+        setReplyTo(null);
+      }
     } catch {
       setError("네트워크 오류");
     } finally {
@@ -87,20 +127,35 @@ export function CommentsSection() {
   }
 
   async function remove(id: string) {
-    if (!confirm("삭제할까요?")) return;
+    if (!confirm("삭제할까요? (답글도 함께 삭제돼요)")) return;
     const res = await fetch(`/api/comments?id=${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
     if (res.ok) {
-      setComments((prev) => prev.filter((c) => c.id !== id));
+      setComments((prev) => prev.filter((c) => c.id !== id && c.parentId !== id));
     }
+  }
+
+  function renderMeta(c: Comment) {
+    const info = accessInfo(c);
+    return (
+      <span className="text-xs text-muted">
+        {formatTime(c.createdAt)}
+        {info && (
+          <span className="ml-2 opacity-70">{info}</span>
+        )}
+        {c.ip && (
+          <span className="ml-2 opacity-50 tabular-nums">{c.ip}</span>
+        )}
+      </span>
+    );
   }
 
   return (
     <section className="rounded-xl border border-card-border bg-card">
       <div className="px-6 py-4 border-b border-card-border flex items-center justify-between">
         <h2 className="font-semibold">방명록</h2>
-        <span className="text-xs text-muted">{comments.length}개</span>
+        <span className="text-xs text-muted">{roots.length}개</span>
       </div>
 
       <div className="px-6 py-4 border-b border-card-border flex flex-col gap-2">
@@ -125,58 +180,146 @@ export function CommentsSection() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                submit();
+                submit(null);
               }
             }}
             maxLength={MAX_LEN}
             className="flex-1 h-10 px-3 rounded-lg border border-card-border bg-background text-sm"
           />
           <button
-            onClick={submit}
+            onClick={() => submit(null)}
             disabled={!author || !text.trim() || posting}
             className="h-10 px-4 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50"
           >
             {posting ? "..." : "등록"}
           </button>
         </div>
+        <div className="text-xs text-muted opacity-70">
+          작성 시 접속 기기·지역·통신사가 함께 표시돼요
+        </div>
         {error && <div className="text-xs text-negative">{error}</div>}
       </div>
 
       {loading ? (
         <div className="px-6 py-8 text-center text-sm text-muted">로딩 중...</div>
-      ) : comments.length === 0 ? (
+      ) : roots.length === 0 ? (
         <div className="px-6 py-8 text-center text-sm text-muted">
           첫 댓글을 남겨보세요 💬
         </div>
       ) : (
         <ul className="divide-y divide-card-border">
-          {comments.map((c) => (
-            <li key={c.id} className="px-6 py-3 flex items-start gap-3">
-              <span className="text-lg leading-none mt-0.5">{c.icon}</span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <span className="text-sm font-medium">{c.author}</span>
-                  <span className="text-xs text-muted">
-                    {formatTime(c.createdAt)}
-                  </span>
+          {roots.map((c) => {
+            const replies = repliesByParent.get(c.id) ?? [];
+            return (
+              <li key={c.id} className="px-6 py-3">
+                <div className="flex items-start gap-3">
+                  <span className="text-lg leading-none mt-0.5">{c.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                      <span className="text-sm font-medium">{c.author}</span>
+                      {renderMeta(c)}
+                    </div>
+                    <div className="text-sm whitespace-pre-wrap break-words">
+                      {c.text}
+                    </div>
+                    <button
+                      onClick={() =>
+                        setReplyTo((prev) => (prev === c.id ? null : c.id))
+                      }
+                      className="mt-1 text-xs text-muted hover:text-accent"
+                    >
+                      {replyTo === c.id ? "취소" : "답글"}
+                    </button>
+                  </div>
+                  {isAdmin && (
+                    <button
+                      onClick={() => remove(c.id)}
+                      className="text-xs text-muted hover:text-negative shrink-0"
+                      aria-label="삭제"
+                    >
+                      삭제
+                    </button>
+                  )}
                 </div>
-                <div className="text-sm whitespace-pre-wrap break-words">
-                  {c.text}
-                </div>
-              </div>
-              {isAdmin && (
-                <button
-                  onClick={() => remove(c.id)}
-                  className="text-xs text-muted hover:text-negative shrink-0"
-                  aria-label="삭제"
-                >
-                  삭제
-                </button>
-              )}
-            </li>
-          ))}
+
+                {/* 답글 목록 */}
+                {replies.length > 0 && (
+                  <ul className="mt-2 ml-8 pl-3 border-l border-card-border flex flex-col gap-2">
+                    {replies.map((r) => (
+                      <li key={r.id} className="flex items-start gap-2">
+                        <span className="text-base leading-none mt-0.5">
+                          {r.icon}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                            <span className="text-sm font-medium">
+                              {r.author}
+                            </span>
+                            {renderMeta(r)}
+                          </div>
+                          <div className="text-sm whitespace-pre-wrap break-words">
+                            {r.text}
+                          </div>
+                        </div>
+                        {isAdmin && (
+                          <button
+                            onClick={() => remove(r.id)}
+                            className="text-xs text-muted hover:text-negative shrink-0"
+                            aria-label="삭제"
+                          >
+                            삭제
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* 답글 입력창 */}
+                {replyTo === c.id && (
+                  <div className="mt-2 ml-8 pl-3 flex gap-2">
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder={`${c.author}에게 답글...`}
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          submit(c.id);
+                        }
+                      }}
+                      maxLength={MAX_LEN}
+                      className="flex-1 h-9 px-3 rounded-lg border border-card-border bg-background text-sm"
+                    />
+                    <button
+                      onClick={() => submit(c.id)}
+                      disabled={!author || !replyText.trim() || posting}
+                      className="h-9 px-3 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50"
+                    >
+                      {posting ? "..." : "답글"}
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
+
+      <div className="px-6 py-3 border-t border-card-border text-[11px] text-muted opacity-60">
+        IP 위치 데이터 ©{" "}
+        <a
+          href="https://db-ip.com"
+          target="_blank"
+          rel="noreferrer"
+          className="underline"
+        >
+          DB-IP
+        </a>{" "}
+        (CC BY 4.0)
+      </div>
     </section>
   );
 }
