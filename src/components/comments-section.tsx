@@ -50,6 +50,7 @@ export function CommentsSection() {
   // 답글 상태
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
+  const [replyAuthor, setReplyAuthor] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -96,16 +97,17 @@ export function CommentsSection() {
   }, [comments]);
 
   async function submit(parentId: string | null) {
+    const who = parentId === null ? author : replyAuthor;
     const raw = parentId === null ? text : replyText;
     const trimmed = raw.trim();
-    if (!author || !trimmed || posting) return;
+    if (!who || !trimmed || posting) return;
     setPosting(true);
     setError("");
     try {
       const res = await fetch("/api/comments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ author, text: trimmed, parentId }),
+        body: JSON.stringify({ author: who, text: trimmed, parentId }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -224,7 +226,12 @@ export function CommentsSection() {
                     </div>
                     <button
                       onClick={() =>
-                        setReplyTo((prev) => (prev === c.id ? null : c.id))
+                        setReplyTo((prev) => {
+                          if (prev === c.id) return null;
+                          setReplyAuthor(author || members[0]?.name || "");
+                          setReplyText("");
+                          return c.id;
+                        })
                       }
                       className="mt-1 text-xs text-muted hover:text-accent"
                     >
@@ -278,6 +285,18 @@ export function CommentsSection() {
                 {/* 답글 입력창 */}
                 {replyTo === c.id && (
                   <div className="mt-2 ml-8 pl-3 flex gap-2">
+                    <select
+                      value={replyAuthor}
+                      onChange={(e) => setReplyAuthor(e.target.value)}
+                      disabled={members.length === 0}
+                      className="h-9 px-2 rounded-lg border border-card-border bg-background text-sm"
+                    >
+                      {members.map((m) => (
+                        <option key={m.name} value={m.name}>
+                          {m.icon} {m.name}
+                        </option>
+                      ))}
+                    </select>
                     <input
                       type="text"
                       autoFocus
@@ -295,7 +314,7 @@ export function CommentsSection() {
                     />
                     <button
                       onClick={() => submit(c.id)}
-                      disabled={!author || !replyText.trim() || posting}
+                      disabled={!replyAuthor || !replyText.trim() || posting}
                       className="h-9 px-3 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50"
                     >
                       {posting ? "..." : "답글"}
@@ -309,16 +328,15 @@ export function CommentsSection() {
       )}
 
       <div className="px-6 py-3 border-t border-card-border text-[11px] text-muted opacity-60">
-        IP 위치 데이터 ©{" "}
+        IP 위치 데이터{" "}
         <a
-          href="https://db-ip.com"
+          href="https://ipwho.is"
           target="_blank"
           rel="noreferrer"
           className="underline"
         >
-          DB-IP
-        </a>{" "}
-        (CC BY 4.0)
+          ipwho.is
+        </a>
       </div>
     </section>
   );
