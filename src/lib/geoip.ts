@@ -1,45 +1,7 @@
-// IP → 지역/통신사 로컬 조회. DB-IP Lite (.mmdb) 파일을 maxmind 리더로 읽는다.
-// DB 파일은 data/geo/ 에 위치(저장소 비커밋). 파일이 없으면 graceful 하게
-// { geo: null, isp: null } 을 반환해 앱이 깨지지 않게 한다.
-//
-// IP 위치 데이터 © DB-IP (https://db-ip.com) — CC BY 4.0
-
-import maxmind, {
-  type Reader,
-  type CityResponse,
-  type AsnResponse,
-} from "maxmind";
-import { existsSync } from "node:fs";
-import path from "node:path";
-
-const CITY_PATH = path.join(process.cwd(), "data/geo/dbip-city-lite.mmdb");
-const ASN_PATH = path.join(process.cwd(), "data/geo/dbip-asn-lite.mmdb");
-
-// undefined = 아직 안 열어봄, null = 파일 없음/실패
-let cityReader: Reader<CityResponse> | null | undefined;
-let asnReader: Reader<AsnResponse> | null | undefined;
-
-async function getReaders() {
-  if (cityReader === undefined) {
-    try {
-      cityReader = existsSync(CITY_PATH)
-        ? await maxmind.open<CityResponse>(CITY_PATH)
-        : null;
-    } catch {
-      cityReader = null;
-    }
-  }
-  if (asnReader === undefined) {
-    try {
-      asnReader = existsSync(ASN_PATH)
-        ? await maxmind.open<AsnResponse>(ASN_PATH)
-        : null;
-    } catch {
-      asnReader = null;
-    }
-  }
-  return { cityReader, asnReader };
-}
+// IP → 지역/통신사 조회. 무료 호스팅 API를 서버에서 호출한다(키 불필요, HTTPS).
+// 배포 환경에서도 큰 DB 파일 없이 도시+통신사를 채울 수 있다.
+// 댓글 작성 시 1회만 호출. 실패/타임아웃 시 graceful 하게 null 반환.
+// 1순위 freeipapi.com, 실패 시 ipapi.co 로 폴백.
 
 function isPrivateIp(raw: string): boolean {
   const ip = raw.startsWith("::ffff:") ? raw.slice(7) : raw;
@@ -57,24 +19,47 @@ export interface GeoInfo {
   isp: string | null;
 }
 
+async function fetchJson(url: string, timeoutMs = 2500): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function pick(obj: unknown, key: string): string | null {
+  if (obj && typeof obj === "object" && key in obj) {
+    const v = (obj as Record<string, unknown>)[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
 export async function lookup(ip: string | null | undefined): Promise<GeoInfo> {
   const empty: GeoInfo = { geo: null, isp: null };
-  if (!ip || isPrivateIp(ip) || !maxmind.validate(ip)) return empty;
+  if (!ip || isPrivateIp(ip)) return empty;
 
-  try {
-    const { cityReader, asnReader } = await getReaders();
-    const city = cityReader?.get(ip) ?? null;
-    const asn = asnReader?.get(ip) ?? null;
-
-    const geo =
-      city?.city?.names?.en ??
-      city?.subdivisions?.[0]?.names?.en ??
-      city?.country?.names?.en ??
-      null;
-    const isp = asn?.autonomous_system_organization ?? null;
-
-    return { geo, isp };
-  } catch {
-    return empty;
+  // 1순위: freeipapi.com (HTTPS, cityName + asnOrganization)
+  const a = await fetchJson(`https://freeipapi.com/api/json/${encodeURIComponent(ip)}`);
+  if (a) {
+    const geo = pick(a, "cityName") || pick(a, "regionName") || pick(a, "countryName");
+    const isp = pick(a, "asnOrganization");
+    if (geo || isp) return { geo, isp };
   }
+
+  // 폴백: ipapi.co (HTTPS, city + org)
+  const b = await fetchJson(`https://ipapi.co/${encodeURIComponent(ip)}/json/`);
+  if (b && !pick(b, "error")) {
+    const geo = pick(b, "city") || pick(b, "region") || pick(b, "country_name");
+    const isp = pick(b, "org");
+    if (geo || isp) return { geo, isp };
+  }
+
+  return empty;
 }
