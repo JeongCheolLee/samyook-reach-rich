@@ -1,6 +1,7 @@
 import { getOverseasBalance, getOverseasDailyPrice, getOverseasPrice, getDeposit, getKRWDeposit } from "@/lib/kis";
 import { getMembers } from "@/lib/members";
 import { CommentsSection } from "@/components/comments-section";
+import { ViewCounter } from "@/components/view-counter";
 import { DestinationProgress } from "@/components/destination-progress";
 import { StockChart } from "@/components/stock-chart";
 
@@ -254,11 +255,14 @@ export default async function Home() {
               삼육 부자야~~~~
             </span>
           </div>
-          {apiError && (
-            <span className="text-xs text-negative bg-negative-bg px-3 py-1 rounded-full">
-              {apiError}
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            <ViewCounter />
+            {apiError && (
+              <span className="text-xs text-negative bg-negative-bg px-3 py-1 rounded-full">
+                {apiError}
+              </span>
+            )}
+          </div>
         </div>
       </header>
 
