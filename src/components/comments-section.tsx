@@ -190,10 +190,10 @@ export function CommentsSection() {
       <span className="text-xs text-muted">
         {formatTime(c.createdAt)}
         {info && (
-          <span className="ml-2 opacity-70">{info}</span>
+          <span className="ml-2">{info}</span>
         )}
         {c.ip && (
-          <span className="ml-2 opacity-50 tabular-nums">{c.ip}</span>
+          <span className="ml-2 tabular-nums">{c.ip}</span>
         )}
       </span>
     );
@@ -242,7 +242,7 @@ export function CommentsSection() {
             {posting ? "..." : "등록"}
           </button>
         </div>
-        <div className="text-xs text-muted opacity-70">
+        <div className="text-xs text-muted">
           작성 시 접속 기기·지역·통신사가 함께 표시돼요
         </div>
         {error && <div className="text-xs text-negative">{error}</div>}
@@ -385,7 +385,7 @@ export function CommentsSection() {
         </ul>
       )}
 
-      <div className="px-6 py-3 border-t border-card-border text-[11px] text-muted opacity-60">
+      <div className="px-6 py-3 border-t border-card-border text-[11px] text-muted">
         접속 지역·통신사는 IP 기반 추정치라 실제와 다를 수 있어요
       </div>
     </section>
