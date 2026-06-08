@@ -324,7 +324,7 @@ export default async function Home() {
                         >
                           {dayPositive ? "▲" : "▼"}{" "}
                           {formatUSD(Math.abs(priceDetail.change))}{" "}
-                          ({dayPositive ? "+" : ""}{priceDetail.changeRate.toFixed(2)}%)
+                          ({dayPositive ? "+" : "-"}{Math.abs(priceDetail.changeRate).toFixed(2)}%)
                         </div>
                       )}
                     </div>
