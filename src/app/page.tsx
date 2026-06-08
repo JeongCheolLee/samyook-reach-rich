@@ -337,17 +337,17 @@ export default async function Home() {
                     <div className="flex items-center gap-3 mb-4 py-2 px-3 rounded-lg bg-card-border/30">
                       <div className="flex-1 text-center">
                         <div className="text-[10px] text-muted">시가</div>
-                        <div className="text-xs font-mono font-medium">{formatUSD(priceDetail.open)}</div>
+                        <div className="text-xs font-mono font-medium">{priceDetail.open > 0 ? formatUSD(priceDetail.open) : <span className="text-muted">—</span>}</div>
                       </div>
                       <div className="w-px h-6 bg-card-border" />
                       <div className="flex-1 text-center">
                         <div className="text-[10px] text-muted">고가</div>
-                        <div className="text-xs font-mono font-medium text-positive">{formatUSD(priceDetail.high)}</div>
+                        <div className={`text-xs font-mono font-medium ${priceDetail.high > 0 ? "text-positive" : "text-muted"}`}>{priceDetail.high > 0 ? formatUSD(priceDetail.high) : "—"}</div>
                       </div>
                       <div className="w-px h-6 bg-card-border" />
                       <div className="flex-1 text-center">
                         <div className="text-[10px] text-muted">저가</div>
-                        <div className="text-xs font-mono font-medium text-negative">{formatUSD(priceDetail.low)}</div>
+                        <div className={`text-xs font-mono font-medium ${priceDetail.low > 0 ? "text-negative" : "text-muted"}`}>{priceDetail.low > 0 ? formatUSD(priceDetail.low) : "—"}</div>
                       </div>
                       <div className="w-px h-6 bg-card-border" />
                       <div className="flex-1 text-center">
