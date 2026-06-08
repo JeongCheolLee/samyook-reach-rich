@@ -207,7 +207,7 @@ export function CommentsSection() {
               }
             }}
             maxLength={MAX_LEN}
-            className="flex-1 h-10 px-3 rounded-lg border border-card-border bg-background text-sm"
+            className="flex-1 min-w-0 h-10 px-3 rounded-lg border border-card-border bg-background text-sm"
           />
           <button
             onClick={() => submit(null)}
@@ -247,7 +247,7 @@ export function CommentsSection() {
                     </div>
                     <button
                       onClick={() => toggleExpanded(c.id)}
-                      className="mt-1 text-xs text-muted hover:text-accent"
+                      className="mt-1 py-2 -my-1 text-xs text-muted hover:text-accent"
                     >
                       {expanded.has(c.id)
                         ? "답글 숨기기"
