@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Member } from "@/lib/mock-data";
 
 interface Comment {
@@ -18,6 +18,8 @@ interface Comment {
 }
 
 const MAX_LEN = 500;
+// 최상위 댓글 점진 렌더: 처음 10개, 스크롤하면 10개씩 더
+const PAGE_SIZE = 10;
 
 function formatTime(ts: number): string {
   const diff = Date.now() - ts;
@@ -52,6 +54,10 @@ export function CommentsSection() {
   // 답글 입력 초안 (댓글 id별로 분리 — 여러 개 펼쳐도 섞이지 않게)
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyAuthors, setReplyAuthors] = useState<Record<string, string>>({});
+
+  // 점진 렌더: 현재 보이는 최상위 댓글 수 + 무한스크롤 센티넬
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const sentinelRef = useRef<HTMLLIElement | null>(null);
 
   function toggleExpanded(id: string) {
     setExpanded((prev) => {
@@ -112,6 +118,25 @@ export function CommentsSection() {
     }
     return { roots, repliesByParent };
   }, [comments]);
+
+  const hasMore = visibleCount < roots.length;
+
+  // 센티넬이 화면에 들어오면 10개씩 더 노출
+  useEffect(() => {
+    if (!hasMore) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleCount((v) => v + PAGE_SIZE);
+        }
+      },
+      { rootMargin: "200px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, roots.length]);
 
   async function submit(parentId: string | null) {
     const who =
@@ -231,7 +256,7 @@ export function CommentsSection() {
         </div>
       ) : (
         <ul className="divide-y divide-card-border">
-          {roots.map((c) => {
+          {roots.slice(0, visibleCount).map((c) => {
             const replies = repliesByParent.get(c.id) ?? [];
             return (
               <li key={c.id} className="px-6 py-3">
@@ -347,6 +372,16 @@ export function CommentsSection() {
               </li>
             );
           })}
+          {hasMore && (
+            <li ref={sentinelRef} className="px-6 py-4">
+              <button
+                onClick={() => setVisibleCount((v) => v + PAGE_SIZE)}
+                className="w-full py-2 text-xs text-muted hover:text-accent"
+              >
+                댓글 {roots.length - visibleCount}개 더 보기
+              </button>
+            </li>
+          )}
         </ul>
       )}
 
