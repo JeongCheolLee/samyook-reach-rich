@@ -142,7 +142,7 @@ export function DestinationProgress({
               )}
               <button
                 onClick={() => setViewIdx(i)}
-                className={`relative group rounded-full transition-all w-3 h-3 sm:w-3.5 sm:h-3.5 ${
+                className={`relative group rounded-full transition-all w-3 h-3 sm:w-3.5 sm:h-3.5 before:absolute before:-inset-1.5 before:content-[''] ${
                   isViewing ? "ring-2 ring-accent ring-offset-1" : ""
                 } ${
                   isDone
