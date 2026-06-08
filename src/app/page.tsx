@@ -282,7 +282,7 @@ export default async function Home() {
         />
 
         {/* 핵심 지표 카드 */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <StatCard
             label="총 납입금"
             value={formatKRW(totalContributed)}
