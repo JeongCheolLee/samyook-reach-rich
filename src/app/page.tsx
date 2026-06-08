@@ -210,13 +210,18 @@ export default async function Home() {
 
         if (price?.output) {
           const p = price.output;
+          // 현재가 API(HHDFS00000300)는 시/고/저를 주지 않으므로 일봉 최근 거래일에서 가져온다.
+          const latest = (daily.output2 || [])[0];
+          // diff(등락폭)는 부호 없는 절댓값. 방향은 rate(등락률) 부호에서 결정한다.
+          const signedRate = Number(p.rate || 0);
+          const magnitude = Number(p.diff || 0);
           priceDetail = {
-            open: Number(p.oprc || 0),
-            high: Number(p.hprc || 0),
-            low: Number(p.lprc || 0),
+            open: Number(latest?.open || 0),
+            high: Number(latest?.high || 0),
+            low: Number(latest?.low || 0),
             prevClose: Number(p.base || 0),
-            change: Number(p.diff || 0),
-            changeRate: Number(p.rate || 0),
+            change: signedRate >= 0 ? magnitude : -magnitude,
+            changeRate: signedRate,
             volume: Number(p.tvol || 0),
           };
         }
