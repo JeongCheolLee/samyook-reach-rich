@@ -319,7 +319,7 @@ export default async function Home() {
                     <div className="text-right">
                       <div
                         className={`text-2xl font-bold ${
-                          positive ? "text-positive" : "text-negative"
+                          dayPositive ? "text-positive" : "text-negative"
                         }`}
                       >
                         {formatUSD(h.currentPrice)}
