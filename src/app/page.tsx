@@ -442,6 +442,11 @@ export default async function Home() {
                     ? (m.totalContributed / totalContributed) * 100
                     : 0;
                 const myValue = Math.round(totalAssetKRW * (sharePercent / 100));
+                const memberReturn =
+                  m.totalContributed > 0
+                    ? ((myValue - m.totalContributed) / m.totalContributed) * 100
+                    : 0;
+                const memberUp = memberReturn >= 0;
                 return (
                   <li
                     key={m.name}
@@ -452,17 +457,22 @@ export default async function Home() {
                       {m.name}
                     </span>
                     <div className="text-right">
-                      <div className="text-xs text-muted font-mono">
-                        납입 {formatKRW(m.totalContributed)}
+                      {/* 평가액은 중립색으로 강조, 색은 작은 수익률 칩에만 (초록 과용 방지) */}
+                      <div className="text-sm font-mono font-semibold tabular-nums text-foreground">
+                        {formatKRW(myValue)}
                       </div>
-                      <div
-                        className={`text-xs font-mono font-semibold ${
-                          myValue >= m.totalContributed
-                            ? "text-positive"
-                            : "text-negative"
-                        }`}
-                      >
-                        평가 {formatKRW(myValue)}
+                      <div className="text-xs font-mono">
+                        <span className="text-muted">
+                          {formatKRW(m.totalContributed)}
+                        </span>
+                        <span
+                          className={`ml-1.5 ${
+                            memberUp ? "text-positive" : "text-negative"
+                          }`}
+                        >
+                          {memberUp ? "+" : ""}
+                          {memberReturn.toFixed(1)}%
+                        </span>
                       </div>
                     </div>
                   </li>
