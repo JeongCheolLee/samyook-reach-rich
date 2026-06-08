@@ -469,6 +469,7 @@ export default async function Home() {
           <StockChart
             data={chartData}
             symbol={h?.symbol || ""}
+            avgPrice={h?.avgPrice}
           />
         ) : (
           <section className="rounded-xl border border-card-border bg-card p-6 text-center text-muted text-sm">

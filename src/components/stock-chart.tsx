@@ -6,6 +6,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
 
@@ -21,9 +22,11 @@ function formatUSD(value: number) {
 export function StockChart({
   data,
   symbol,
+  avgPrice,
 }: {
   data: ChartPoint[];
   symbol: string;
+  avgPrice?: number;
 }) {
   if (data.length === 0) return null;
 
@@ -34,6 +37,14 @@ export function StockChart({
   const isPositive = change >= 0;
 
   const color = isPositive ? "#16a34a" : "#dc2626";
+
+  // 평단(평균 매수가)이 있으면 가로선으로 표시. 가격 범위 밖이어도 보이도록 Y축 도메인을 넓힌다.
+  const hasAvg = typeof avgPrice === "number" && avgPrice > 0;
+  const prices = data.map((d) => d.price);
+  const dataMin = Math.min(...prices);
+  const dataMax = Math.max(...prices);
+  const yMin = (hasAvg ? Math.min(dataMin, avgPrice!) : dataMin) - 2;
+  const yMax = (hasAvg ? Math.max(dataMax, avgPrice!) : dataMax) + 2;
 
   return (
     <section className="rounded-xl border border-card-border bg-card p-6">
@@ -68,7 +79,7 @@ export function StockChart({
               interval="preserveStartEnd"
             />
             <YAxis
-              domain={["dataMin - 2", "dataMax + 2"]}
+              domain={[yMin, yMax]}
               axisLine={false}
               tickLine={false}
               tick={{ fontSize: 11, fill: "#94a3b8" }}
@@ -91,6 +102,20 @@ export function StockChart({
               strokeWidth={2}
               fill="url(#priceGradient)"
             />
+            {hasAvg && (
+              <ReferenceLine
+                y={avgPrice}
+                stroke="#64748b"
+                strokeDasharray="4 4"
+                strokeWidth={1.5}
+                label={{
+                  value: `평단 ${formatUSD(avgPrice!)}`,
+                  position: "insideTopLeft",
+                  fontSize: 11,
+                  fill: "#64748b",
+                }}
+              />
+            )}
           </AreaChart>
         </ResponsiveContainer>
       </div>
