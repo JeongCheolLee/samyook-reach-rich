@@ -1,4 +1,6 @@
-import { getOverseasBalance, getOverseasDailyPrice, getOverseasPrice, getDeposit, getKRWDeposit } from "@/lib/kis";
+import { getOverseasBalance, getOverseasDailyPrice, getOverseasPrice, getDeposit, getKRWDeposit, getOverseasTransactions, getUsdKrwDaily } from "@/lib/kis";
+import { computeFxBreakdown, parseTransactionLots } from "@/lib/fx";
+import { FxBreakdown } from "@/components/fx-breakdown";
 import { getMembers } from "@/lib/members";
 import { CommentsSection } from "@/components/comments-section";
 import { ViewCounter } from "@/components/view-counter";
@@ -159,12 +161,17 @@ export default async function Home() {
   let depositKRW = 0; // 원화 잔고
   let exchangeRate = 0; // 환율
   let apiError = "";
+  // 환차손익 카드. 거래내역/환율 일봉 조회가 실패하면 null → 카드만 숨김
+  let fx: ReturnType<typeof computeFxBreakdown> = null;
+  let fxDaily: Awaited<ReturnType<typeof getUsdKrwDaily>> | null = null;
 
   try {
-    const [balance, depositData, krwData] = await Promise.all([
+    const [balance, depositData, krwData, transactions, usdKrw] = await Promise.all([
       getOverseasBalance(),
       getDeposit().catch(() => null),
       getKRWDeposit().catch(() => null),
+      getOverseasTransactions().catch(() => null),
+      getUsdKrwDaily().catch(() => null),
     ]);
 
     const rawHoldings = balance.output1 || [];
@@ -188,6 +195,19 @@ export default async function Home() {
       depositUSD = Number(depositData.output.ord_psbl_frcr_amt || 0);
       exchangeRate = Number(depositData.output.exrt || 0);
     }
+
+    // 환차손익 3분해 — 정산 완료 매수 lot별 (현재환율 − 적용환율). 계산은 src/lib/fx.ts
+    if (transactions) {
+      fx = computeFxBreakdown({
+        lots: parseTransactionLots(transactions.output1),
+        holdings: rawHoldings.map((h: Record<string, string>) => ({
+          usdCost: Number(h.frcr_pchs_amt1 || 0),
+          usdValue: Number(h.ovrs_stck_evlu_amt || 0),
+        })),
+        rateNow: exchangeRate,
+      });
+    }
+    fxDaily = usdKrw;
 
     // 원화 예수금 파싱
     if (krwData?.output) {
@@ -302,6 +322,15 @@ export default async function Home() {
             color={isPositive ? "positive" : "negative"}
           />
         </div>
+
+        {/* 환차손익 카드 */}
+        {fx && (
+          <FxBreakdown
+            fx={fx}
+            chart={fxDaily?.points ?? []}
+            quote={fxDaily?.quote ?? null}
+          />
+        )}
 
         <div className="grid gap-6 lg:grid-cols-2">
           {/* 보유 종목 */}
