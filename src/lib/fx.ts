@@ -171,3 +171,45 @@ export function computeFxBreakdown({
     pendingLots,
   };
 }
+
+// 주가 영향(±) × 환율 영향(±) 4조합별 한 줄 멘트 — page.tsx의 STOCK_COMMENT_TIERS 톤.
+// 서버에서 1회 선택해 props로 내려야 한다 (클라이언트에서 뽑으면 하이드레이션 불일치).
+const FX_COMMENTS = {
+  pp: [
+    "환율이 우릴 부자로 만든다 이건 못 참지",
+    "주식도 달러도 우리 편... 이럴 때가 제일 무섭다",
+    "나스닥도 킹달러도 순풍 유럽 직항 알아보자",
+  ],
+  pn: [
+    "주식은 벌었는데 환율이 다 먹었다",
+    "나스닥은 이겼는데 원화가 배신했다",
+    "환율만 제자리였으면 치킨이 몇 마리냐",
+  ],
+  np: [
+    "주식은 물렸는데 달러가 살렸다 킹달러 만세",
+    "나스닥은 졌지만 환율로 방어 성공",
+    "주가 빠진 만큼 환율이 메꿨다 이게 헤지다",
+  ],
+  nn: [
+    "주식도 환율도 안 도와준다 존버각",
+    "이중으로 맞았다 라면 끓일 시간",
+    "나스닥 하락에 원화 강세 오늘은 차트 끄자",
+  ],
+} as const;
+
+export function getFxComment(stockGain: number, fxGain: number): string {
+  const key = `${stockGain >= 0 ? "p" : "n"}${
+    fxGain >= 0 ? "p" : "n"
+  }` as keyof typeof FX_COMMENTS;
+  const messages = FX_COMMENTS[key];
+  return messages[Math.floor(Math.random() * messages.length)];
+}
+
+/**
+ * 원화 손익 4분해. 합계가 페이지의 총자산 − 총납입금과 정확히 일치하도록,
+ * 설명 가능한 세 항목(주가·환율·수수료)을 뺀 나머지를 "그 외"로 둔다.
+ * 그 외 = 달러 예수금 환산손익 + 결제 전 매수분 + 반올림 잔차.
+ */
+export function fxOtherGain(fx: FxBreakdown, total: number): number {
+  return total - fx.stockGain - fx.fxGain + fx.fees;
+}

@@ -17,6 +17,14 @@ export interface FxChartPoint {
   rate: number;
 }
 
+/** FX 일봉 output1에서 온 현재/전일대비 (시장환율 기준) */
+export interface FxQuote {
+  rate: number;
+  prevClose: number;
+  change: number;
+  changeRate: number;
+}
+
 function formatRate(value: number) {
   return (
     "₩" +
@@ -28,34 +36,34 @@ function formatRate(value: number) {
 }
 
 /**
- * 원/달러 30일 차트 + 우리 평균 적용환율 가로 점선 (주가 차트의 평단선과 같은 문법).
- * 환차손익 카드 안에서 렌더되는 하위 블록이라 자체 카드 테두리는 없다.
+ * 원/달러 30일 차트 + 우리 평균 매수환율 가로 점선 (주가 차트의 평단선과 같은 문법).
+ * 차트 탭의 한 칸으로 렌더되므로 StockChart와 같은 카드 껍데기를 갖는다.
  */
 export function FxChart({
   data,
   avgRate,
   rateNow,
+  quote,
 }: {
   data: FxChartPoint[];
-  /** 정산 완료 매수의 USD 가중평균 적용환율 */
+  /** 결제 완료 매수의 USD 가중평균 적용환율 */
   avgRate: number;
   /** 계산에 쓴 현재 고시환율 */
   rateNow: number;
+  /** 시장환율 전일 대비. null이면 등락 줄 생략 */
+  quote?: FxQuote | null;
 }) {
   if (data.length === 0) return null;
 
-  const first = data[0].rate;
-  const last = data[data.length - 1].rate;
-  const change = last - first;
-  const changePercent = (change / first) * 100;
-  // 달러를 들고 있으니 환율 상승 = 우리에게 이득
-  const changeUp = change >= 0;
-
-  // 면·선 색은 "현재환율이 우리 평균 적용환율 위인가"(= 환차익 중인가)로 정한다.
-  const aboveAvg = rateNow >= avgRate;
+  // 헤더 숫자는 "30일 변화"가 아니라 "내 평균 매수환율 대비" — 패널의 환율 영향과 같은 기준
+  const diff = rateNow - avgRate;
+  const diffPercent = (diff / avgRate) * 100;
+  // 달러를 들고 있으니 환율이 평단 위 = 우리에게 이득
+  const aboveAvg = diff >= 0;
   const color = aboveAvg ? "#16a34a" : "#dc2626";
+  const dayUp = quote ? quote.change >= 0 : null;
 
-  // 평균 적용환율이 차트 범위 밖이어도 보이도록 Y축 범위에 포함시키고,
+  // 평균 매수환율이 차트 범위 밖이어도 보이도록 Y축 범위에 포함시키고,
   // 깔끔한 단위(5·10·20·25·50…)로 감싸 눈금을 직접 준다 (끝 눈금만 튀는 것 방지).
   const rates = data.map((d) => d.rate);
   const lo = Math.min(...rates, avgRate);
@@ -71,18 +79,32 @@ export function FxChart({
   for (let v = yMin; v <= yMax; v += step) ticks.push(v);
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-3 gap-3">
-        <h3 className="text-sm font-medium">원/달러 최근 30일</h3>
-        <span
-          className={`text-sm font-semibold font-mono ${
-            changeUp ? "text-positive" : "text-negative"
-          }`}
-        >
-          {changeUp ? "+" : ""}
-          {change.toFixed(1)} ({changeUp ? "+" : ""}
-          {changePercent.toFixed(2)}%)
-        </span>
+    <section className="rounded-xl border border-card-border bg-card p-6">
+      <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <h2 className="font-semibold">원/달러 최근 30일</h2>
+        <div className="sm:text-right">
+          <span
+            className={`font-mono text-sm font-semibold ${
+              aboveAvg ? "text-positive" : "text-negative"
+            }`}
+          >
+            평균 매수환율 대비 {aboveAvg ? "+" : ""}
+            {diff.toFixed(1)} ({aboveAvg ? "+" : ""}
+            {diffPercent.toFixed(2)}%)
+          </span>
+          {quote && dayUp !== null && (
+            <div className="text-xs text-muted">
+              오늘 {formatRate(quote.rate)}{" "}
+              <span
+                className={`font-mono ${dayUp ? "text-positive" : "text-negative"}`}
+              >
+                {dayUp ? "▲" : "▼"} {Math.abs(quote.change).toFixed(1)} (
+                {dayUp ? "+" : "-"}
+                {Math.abs(quote.changeRate).toFixed(2)}%)
+              </span>
+            </div>
+          )}
+        </div>
       </div>
       <div className="h-48 sm:h-56">
         <ResponsiveContainer width="100%" height="100%">
@@ -134,7 +156,7 @@ export function FxChart({
               strokeDasharray="4 4"
               strokeWidth={1.5}
               label={{
-                value: `평균 환율 ${formatRate(avgRate)}`,
+                value: `평균 매수환율 ${formatRate(avgRate)}`,
                 position: "insideTopLeft",
                 fontSize: 11,
                 fill: "#64748b",
@@ -143,6 +165,6 @@ export function FxChart({
           </AreaChart>
         </ResponsiveContainer>
       </div>
-    </div>
+    </section>
   );
 }

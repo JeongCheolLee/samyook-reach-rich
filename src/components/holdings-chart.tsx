@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { StockChart } from "./stock-chart";
+import { FxChart, type FxChartPoint, type FxQuote } from "./fx-chart";
 
 export interface ChartPoint {
   date: string;
@@ -16,6 +17,19 @@ export interface HoldingsChartItem {
   avgPrice?: number;
 }
 
+export interface FxChartItem {
+  /** 원/달러 30일 일봉 (오래된 → 최신) */
+  data: FxChartPoint[];
+  /** 결제 완료 매수의 USD 가중평균 적용환율 */
+  avgRate: number;
+  /** KIS 고시환율 */
+  rateNow: number;
+  quote: FxQuote | null;
+}
+
+/** 원/달러 탭의 키. 종목코드와 겹치지 않는 값 */
+const FX_TAB = "__fx__";
+
 function EmptyChart() {
   return (
     <section className="rounded-xl border border-card-border bg-card p-6 text-center text-muted text-sm">
@@ -24,27 +38,56 @@ function EmptyChart() {
   );
 }
 
-/** 종목별 30일 차트. 1종목이면 탭 없이 차트만, 2종목 이상이면 종목코드 pill 탭으로 전환. */
-export function HoldingsChart({ items }: { items: HoldingsChartItem[] }) {
-  const [selected, setSelected] = useState(items[0]?.symbol ?? "");
+/**
+ * 30일 차트 탭. 종목별 주가 차트에 원/달러 환율 차트를 한 탭으로 붙인다.
+ * 탭이 하나뿐이면 탭 줄 없이 차트만 렌더 (1종목 + 환율 없음 = 0.4.0과 동일).
+ */
+export function HoldingsChart({
+  items,
+  fx,
+}: {
+  items: HoldingsChartItem[];
+  /** 환율 차트. null이면 탭을 추가하지 않는다 */
+  fx?: FxChartItem | null;
+}) {
+  const hasFx = !!fx && fx.data.length > 0;
+  const tabs = [
+    ...items.map((item) => ({ key: item.symbol, label: item.symbol, title: item.name })),
+    ...(hasFx ? [{ key: FX_TAB, label: "원/달러", title: "원/달러 환율" }] : []),
+  ];
+  const [selected, setSelected] = useState(tabs[0]?.key ?? "");
 
-  if (items.length === 0) return <EmptyChart />;
+  if (tabs.length === 0) return <EmptyChart />;
 
-  // 선택된 종목이 목록에서 사라졌으면(리렌더로 items가 바뀐 경우) 첫 종목으로
-  const active = items.find((i) => i.symbol === selected) ?? items[0];
-  const chart =
-    active.data.length > 0 ? (
-      <StockChart
-        key={active.symbol}
-        data={active.data}
-        symbol={active.symbol}
-        avgPrice={active.avgPrice}
+  // 선택된 탭이 목록에서 사라졌으면(리렌더로 items가 바뀐 경우) 첫 탭으로
+  const active = tabs.find((t) => t.key === selected) ?? tabs[0];
+
+  let chart;
+  if (active.key === FX_TAB && fx) {
+    chart = (
+      <FxChart
+        data={fx.data}
+        avgRate={fx.avgRate}
+        rateNow={fx.rateNow}
+        quote={fx.quote}
       />
-    ) : (
-      <EmptyChart />
     );
+  } else {
+    const holding = items.find((i) => i.symbol === active.key);
+    chart =
+      holding && holding.data.length > 0 ? (
+        <StockChart
+          key={holding.symbol}
+          data={holding.data}
+          symbol={holding.symbol}
+          avgPrice={holding.avgPrice}
+        />
+      ) : (
+        <EmptyChart />
+      );
+  }
 
-  if (items.length === 1) return chart;
+  if (tabs.length === 1) return chart;
 
   const panelId = "holdings-chart-panel";
 
@@ -55,18 +98,18 @@ export function HoldingsChart({ items }: { items: HoldingsChartItem[] }) {
         aria-label="차트 종목 선택"
         className="flex flex-wrap gap-2"
       >
-        {items.map((item) => {
-          const isActive = item.symbol === active.symbol;
+        {tabs.map((tab) => {
+          const isActive = tab.key === active.key;
           return (
             <button
-              key={item.symbol}
+              key={tab.key}
               type="button"
               role="tab"
-              id={`holdings-chart-tab-${item.symbol}`}
+              id={`holdings-chart-tab-${tab.key}`}
               aria-selected={isActive}
               aria-controls={panelId}
-              title={item.name}
-              onClick={() => setSelected(item.symbol)}
+              title={tab.title}
+              onClick={() => setSelected(tab.key)}
               // min-h-11 = 44px: 모바일 터치 영역 기준 (0.4.0 디자인 원칙)
               className={`min-h-11 px-4 rounded-full border text-sm font-semibold font-mono transition-colors ${
                 isActive
@@ -74,7 +117,7 @@ export function HoldingsChart({ items }: { items: HoldingsChartItem[] }) {
                   : "bg-card text-muted border-card-border hover:text-foreground hover:border-muted"
               }`}
             >
-              {item.symbol}
+              {tab.label}
             </button>
           );
         })}
@@ -82,7 +125,7 @@ export function HoldingsChart({ items }: { items: HoldingsChartItem[] }) {
       <div
         role="tabpanel"
         id={panelId}
-        aria-labelledby={`holdings-chart-tab-${active.symbol}`}
+        aria-labelledby={`holdings-chart-tab-${active.key}`}
       >
         {chart}
       </div>
