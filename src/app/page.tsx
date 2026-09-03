@@ -1,6 +1,11 @@
 import { getOverseasBalance, getOverseasDailyPrice, getOverseasPrice, getDeposit, getKRWDeposit, getOverseasTransactions, getUsdKrwDaily } from "@/lib/kis";
-import { computeFxBreakdown, parseTransactionLots } from "@/lib/fx";
-import { FxBreakdown } from "@/components/fx-breakdown";
+import {
+  computeFxBreakdown,
+  parseTransactionLots,
+  fxOtherGain,
+  getFxComment,
+} from "@/lib/fx";
+import { ReturnBreakdown } from "@/components/return-breakdown";
 import { getMembers } from "@/lib/members";
 import { CommentsSection } from "@/components/comments-section";
 import { ViewCounter } from "@/components/view-counter";
@@ -119,11 +124,6 @@ const STOCK_COMMENT_TIERS: { min: number; messages: string[] }[] = [
 function getStockComment(returnRate: number): string {
   const tier = STOCK_COMMENT_TIERS.find((t) => returnRate >= t.min)!;
   return tier.messages[Math.floor(Math.random() * tier.messages.length)];
-}
-
-function formatPercent(value: number) {
-  const sign = value >= 0 ? "+" : "";
-  return sign + value.toFixed(2) + "%";
 }
 
 /** 종목 하나의 30일 차트 + 현재가 상세. 조회 실패 시 빈 배열 / null */
@@ -254,11 +254,13 @@ export default async function Home() {
   const totalValueKRW = Math.round(totalValue * rate);
   const totalAssetKRW = depositKRW + depositUSDtoKRW + totalValueKRW;
   const totalContributed = memberList.reduce((s, m) => s + m.totalContributed, 0);
+  const totalReturnKRW = totalAssetKRW - totalContributed;
   const returnRate =
     totalContributed > 0
       ? ((totalAssetKRW - totalContributed) / totalContributed) * 100
       : 0;
-  const isPositive = returnRate >= 0;
+  // 보유 수량 합계 (결제 대기분 포함) — 매수 내역 표의 "보유 N주 중" 문구용
+  const heldQty = holdings.reduce((sum, h) => sum + h.quantity, 0);
   const perPersonValue =
     memberCount > 0 ? Math.round(totalAssetKRW / memberCount) : 0;
 
@@ -301,36 +303,22 @@ export default async function Home() {
           memberCount={memberCount}
         />
 
-        {/* 핵심 지표 카드 */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <StatCard
-            label="총 납입금"
-            value={formatKRW(totalContributed)}
-          />
-          <StatCard
-            label="총 자산"
-            value={formatKRW(totalAssetKRW)}
-            tooltip={[
-              `투자금액: ${formatKRW(totalContributed - depositUSDtoKRW - depositKRW)}`,
-              `예수금(달러): ${formatUSD(depositUSD)} (${formatKRW(depositUSDtoKRW)})`,
-              `예수금(원화): ${formatKRW(depositKRW)}`,
-            ]}
-          />
-          <StatCard
-            label="수익률"
-            value={`${formatPercent(returnRate)} (${formatKRW(totalAssetKRW - totalContributed)})`}
-            color={isPositive ? "positive" : "negative"}
-          />
-        </div>
-
-        {/* 환차손익 카드 */}
-        {fx && (
-          <FxBreakdown
-            fx={fx}
-            chart={fxDaily?.points ?? []}
-            quote={fxDaily?.quote ?? null}
-          />
-        )}
+        {/* 핵심 지표 카드 + 수익률 분해 패널 (환율 영향이 여기 들어있다) */}
+        <ReturnBreakdown
+          contributed={totalContributed}
+          asset={totalAssetKRW}
+          returnRate={returnRate}
+          total={totalReturnKRW}
+          assetTooltip={[
+            `투자금액: ${formatKRW(totalContributed - depositUSDtoKRW - depositKRW)}`,
+            `예수금(달러): ${formatUSD(depositUSD)} (${formatKRW(depositUSDtoKRW)})`,
+            `예수금(원화): ${formatKRW(depositKRW)}`,
+          ]}
+          fx={fx}
+          other={fx ? fxOtherGain(fx, totalReturnKRW) : 0}
+          comment={fx ? getFxComment(fx.stockGain, fx.fxGain) : ""}
+          heldQty={heldQty}
+        />
 
         <div className="grid gap-6 lg:grid-cols-2">
           {/* 보유 종목 */}
@@ -417,49 +405,23 @@ export default async function Home() {
         </div>
 
         {/* 주가 차트 (종목별, 2개 이상이면 탭) */}
-        <HoldingsChart items={chartItems} />
+        <HoldingsChart
+          items={chartItems}
+          fx={
+            fx && fxDaily
+              ? {
+                  data: fxDaily.points,
+                  avgRate: fx.avgRate,
+                  rateNow: fx.rateNow,
+                  quote: fxDaily.quote,
+                }
+              : null
+          }
+        />
 
         {/* 방명록 */}
         <CommentsSection />
       </main>
-    </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  color,
-  tooltip,
-}: {
-  label: string;
-  value: string;
-  color?: "positive" | "negative";
-  tooltip?: string[];
-}) {
-  return (
-    <div className="rounded-xl border border-card-border bg-card p-4 relative group">
-      <div className="text-xs text-muted mb-1">{label}</div>
-      <div
-        className={`text-lg font-semibold tracking-tight ${
-          color === "positive"
-            ? "text-positive"
-            : color === "negative"
-            ? "text-negative"
-            : "text-foreground"
-        }`}
-      >
-        {value}
-      </div>
-      {tooltip && (
-        <div className="absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-card-border bg-card p-3 shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity">
-          {tooltip.map((line, i) => (
-            <div key={i} className="text-xs text-muted font-mono whitespace-nowrap">
-              {line}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
