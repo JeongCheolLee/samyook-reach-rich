@@ -1,9 +1,13 @@
-import { getOverseasBalance, getOverseasDailyPrice, getOverseasPrice, getDeposit, getKRWDeposit } from "@/lib/kis";
+import { getOverseasBalance, getOverseasDailyPrice, getOverseasPrice, getDeposit, getKRWDeposit, getOverseasTransactions, getUsdKrwDaily } from "@/lib/kis";
+import { computeFxBreakdown, parseTransactionLots } from "@/lib/fx";
+import { FxBreakdown } from "@/components/fx-breakdown";
 import { getMembers } from "@/lib/members";
 import { CommentsSection } from "@/components/comments-section";
 import { ViewCounter } from "@/components/view-counter";
 import { DestinationProgress } from "@/components/destination-progress";
-import { StockChart } from "@/components/stock-chart";
+import { HoldingCard, type HoldingData, type PriceDetail } from "@/components/holding-card";
+import { HoldingsChart, type ChartPoint } from "@/components/holdings-chart";
+import { toPriceExchangeCode } from "@/lib/exchange";
 
 export const dynamic = "force-dynamic";
 
@@ -122,49 +126,75 @@ function formatPercent(value: number) {
   return sign + value.toFixed(2) + "%";
 }
 
-interface HoldingData {
-  symbol: string;
-  name: string;
-  quantity: number;
-  avgPrice: number;
-  currentPrice: number;
-  totalValue: number;
-  totalCost: number;
-  returnRate: number;
+/** 종목 하나의 30일 차트 + 현재가 상세. 조회 실패 시 빈 배열 / null */
+interface HoldingDetail {
+  chartData: ChartPoint[];
+  priceDetail: PriceDetail | null;
 }
 
-interface ChartPoint {
-  date: string;
-  price: number;
-}
+/** 종목별 일봉 + 현재가 조회. 거래소 코드는 잔고(NASD/NYSE/AMEX) → 시세(NAS/NYS/AMS)로 변환해서 넘긴다.
+ *  한 종목의 실패가 다른 종목을 막지 않도록 여기서 삼킨다. */
+async function fetchHoldingDetail(holding: HoldingData): Promise<HoldingDetail> {
+  const exchange = toPriceExchangeCode(holding.exchange);
+  try {
+    const [daily, price] = await Promise.all([
+      getOverseasDailyPrice(holding.symbol, exchange),
+      getOverseasPrice(holding.symbol, exchange).catch(() => null),
+    ]);
+    const chartData: ChartPoint[] = (daily.output2 || [])
+      .map((d: Record<string, string>) => ({
+        date: `${d.xymd.slice(4, 6)}/${d.xymd.slice(6)}`,
+        price: Number(d.clos || 0),
+      }))
+      .reverse();
 
-interface PriceDetail {
-  open: number;
-  high: number;
-  low: number;
-  prevClose: number;
-  change: number;
-  changeRate: number;
-  volume: number;
+    let priceDetail: PriceDetail | null = null;
+    if (price?.output) {
+      const p = price.output;
+      // 현재가 API(HHDFS00000300)는 시/고/저를 주지 않으므로 일봉 최근 거래일에서 가져온다.
+      const latest = (daily.output2 || [])[0];
+      // diff(등락폭)는 부호 없는 절댓값. 방향은 rate(등락률) 부호에서 결정한다.
+      const signedRate = Number(p.rate || 0);
+      const magnitude = Number(p.diff || 0);
+      priceDetail = {
+        open: Number(latest?.open || 0),
+        high: Number(latest?.high || 0),
+        low: Number(latest?.low || 0),
+        prevClose: Number(p.base || 0),
+        change: signedRate >= 0 ? magnitude : -magnitude,
+        changeRate: signedRate,
+        volume: Number(p.tvol || 0),
+      };
+    }
+    return { chartData, priceDetail };
+  } catch {
+    // 차트/가격 실패해도 계속
+    return { chartData: [], priceDetail: null };
+  }
 }
 
 export default async function Home() {
   // 실데이터 fetch
   let holdings: HoldingData[] = [];
-  let chartData: ChartPoint[] = [];
-  let priceDetail: PriceDetail | null = null;
+  // 종목코드 → 차트/현재가 상세
+  const details: Record<string, HoldingDetail> = {};
   let totalInvested = 0;
   let totalValue = 0;
   let depositUSD = 0; // 달러 잔고
   let depositKRW = 0; // 원화 잔고
   let exchangeRate = 0; // 환율
   let apiError = "";
+  // 환차손익 카드. 거래내역/환율 일봉 조회가 실패하면 null → 카드만 숨김
+  let fx: ReturnType<typeof computeFxBreakdown> = null;
+  let fxDaily: Awaited<ReturnType<typeof getUsdKrwDaily>> | null = null;
 
   try {
-    const [balance, depositData, krwData] = await Promise.all([
+    const [balance, depositData, krwData, transactions, usdKrw] = await Promise.all([
       getOverseasBalance(),
       getDeposit().catch(() => null),
       getKRWDeposit().catch(() => null),
+      getOverseasTransactions().catch(() => null),
+      getUsdKrwDaily().catch(() => null),
     ]);
 
     const rawHoldings = balance.output1 || [];
@@ -172,6 +202,7 @@ export default async function Home() {
     holdings = rawHoldings.map((h: Record<string, string>) => ({
       symbol: h.ovrs_pdno,
       name: h.ovrs_item_name,
+      exchange: h.ovrs_excg_cd,
       quantity: Number(h.ovrs_cblc_qty || 0),
       avgPrice: Number(h.pchs_avg_pric || 0),
       currentPrice: Number(h.now_pric2 || 0),
@@ -189,46 +220,29 @@ export default async function Home() {
       exchangeRate = Number(depositData.output.exrt || 0);
     }
 
+    // 환차손익 3분해 — 정산 완료 매수 lot별 (현재환율 − 적용환율). 계산은 src/lib/fx.ts
+    if (transactions) {
+      fx = computeFxBreakdown({
+        lots: parseTransactionLots(transactions.output1),
+        holdings: rawHoldings.map((h: Record<string, string>) => ({
+          usdCost: Number(h.frcr_pchs_amt1 || 0),
+          usdValue: Number(h.ovrs_stck_evlu_amt || 0),
+        })),
+        rateNow: exchangeRate,
+      });
+    }
+    fxDaily = usdKrw;
+
     // 원화 예수금 파싱
     if (krwData?.output) {
       depositKRW = Number(krwData.output.ord_psbl_cash || krwData.output.dnca_tot_amt || 0);
     }
 
-    // 첫 번째 종목 차트 + 현재가 상세
-    if (holdings.length > 0) {
-      try {
-        const [daily, price] = await Promise.all([
-          getOverseasDailyPrice(holdings[0].symbol),
-          getOverseasPrice(holdings[0].symbol).catch(() => null),
-        ]);
-        chartData = (daily.output2 || [])
-          .map((d: Record<string, string>) => ({
-            date: `${d.xymd.slice(4, 6)}/${d.xymd.slice(6)}`,
-            price: Number(d.clos || 0),
-          }))
-          .reverse();
-
-        if (price?.output) {
-          const p = price.output;
-          // 현재가 API(HHDFS00000300)는 시/고/저를 주지 않으므로 일봉 최근 거래일에서 가져온다.
-          const latest = (daily.output2 || [])[0];
-          // diff(등락폭)는 부호 없는 절댓값. 방향은 rate(등락률) 부호에서 결정한다.
-          const signedRate = Number(p.rate || 0);
-          const magnitude = Number(p.diff || 0);
-          priceDetail = {
-            open: Number(latest?.open || 0),
-            high: Number(latest?.high || 0),
-            low: Number(latest?.low || 0),
-            prevClose: Number(p.base || 0),
-            change: signedRate >= 0 ? magnitude : -magnitude,
-            changeRate: signedRate,
-            volume: Number(p.tvol || 0),
-          };
-        }
-      } catch {
-        // 차트/가격 실패해도 계속
-      }
-    }
+    // 종목별 차트 + 현재가 상세 (모든 종목 병렬, 종목 단위 실패는 빈 값)
+    const detailList = await Promise.all(holdings.map(fetchHoldingDetail));
+    holdings.forEach((holding, i) => {
+      details[holding.symbol] = detailList[i];
+    });
   } catch (e) {
     apiError = e instanceof Error ? e.message : "Unknown error";
   }
@@ -248,7 +262,13 @@ export default async function Home() {
   const perPersonValue =
     memberCount > 0 ? Math.round(totalAssetKRW / memberCount) : 0;
 
-  const h = holdings[0] || null;
+  const showWeight = holdings.length > 1 && totalValue > 0;
+  const chartItems = holdings.map((holding) => ({
+    symbol: holding.symbol,
+    name: holding.name,
+    data: details[holding.symbol]?.chartData ?? [],
+    avgPrice: holding.avgPrice,
+  }));
 
   return (
     <div className="flex-1 flex flex-col">
@@ -303,119 +323,33 @@ export default async function Home() {
           />
         </div>
 
+        {/* 환차손익 카드 */}
+        {fx && (
+          <FxBreakdown
+            fx={fx}
+            chart={fxDaily?.points ?? []}
+            quote={fxDaily?.quote ?? null}
+          />
+        )}
+
         <div className="grid gap-6 lg:grid-cols-2">
           {/* 보유 종목 */}
-          {h ? (
-            (() => {
-              const positive = h.returnRate >= 0;
-              const dayPositive = priceDetail ? priceDetail.change >= 0 : true;
-              return (
-                <section className="rounded-xl border border-card-border bg-card p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h2 className="text-2xl font-bold">{h.symbol}</h2>
-                      <span className="text-sm text-muted">{h.name}</span>
-                    </div>
-                    <div className="text-right">
-                      <div
-                        className={`text-2xl font-bold ${
-                          dayPositive ? "text-positive" : "text-negative"
-                        }`}
-                      >
-                        {formatUSD(h.currentPrice)}
-                      </div>
-                      {priceDetail && (
-                        <div
-                          className={`text-sm font-mono ${
-                            dayPositive ? "text-positive" : "text-negative"
-                          }`}
-                        >
-                          {dayPositive ? "▲" : "▼"}{" "}
-                          {formatUSD(Math.abs(priceDetail.change))}{" "}
-                          ({dayPositive ? "+" : "-"}{Math.abs(priceDetail.changeRate).toFixed(2)}%)
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {priceDetail && (
-                    <div className="flex items-center gap-3 mb-4 py-2 px-3 rounded-lg bg-card-border/30">
-                      <div className="flex-1 text-center">
-                        <div className="text-[10px] text-muted">시가</div>
-                        <div className="text-xs font-mono font-medium">{priceDetail.open > 0 ? formatUSD(priceDetail.open) : <span className="text-muted">—</span>}</div>
-                      </div>
-                      <div className="w-px h-6 bg-card-border" />
-                      <div className="flex-1 text-center">
-                        <div className="text-[10px] text-muted">고가</div>
-                        <div className={`text-xs font-mono font-medium ${priceDetail.high > 0 ? "text-positive" : "text-muted"}`}>{priceDetail.high > 0 ? formatUSD(priceDetail.high) : "—"}</div>
-                      </div>
-                      <div className="w-px h-6 bg-card-border" />
-                      <div className="flex-1 text-center">
-                        <div className="text-[10px] text-muted">저가</div>
-                        <div className={`text-xs font-mono font-medium ${priceDetail.low > 0 ? "text-negative" : "text-muted"}`}>{priceDetail.low > 0 ? formatUSD(priceDetail.low) : "—"}</div>
-                      </div>
-                      <div className="w-px h-6 bg-card-border" />
-                      <div className="flex-1 text-center">
-                        <div className="text-[10px] text-muted">거래량</div>
-                        <div className="text-xs font-mono font-medium">{new Intl.NumberFormat("en-US", { notation: "compact" }).format(priceDetail.volume)}</div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                      <div className="text-xs text-muted mb-0.5">평균 매수가</div>
-                      <div className="font-mono font-semibold">
-                        {formatUSD(h.avgPrice)}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-muted mb-0.5">보유 수량</div>
-                      <div className="font-semibold">{h.quantity}주</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-muted mb-0.5">매수금</div>
-                      <div className="font-mono font-semibold">
-                        {formatUSD(h.totalCost)}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-muted mb-0.5">평가금</div>
-                      <div
-                        className={`font-mono font-semibold ${
-                          positive ? "text-positive" : "text-negative"
-                        }`}
-                      >
-                        {formatUSD(h.totalValue)}
-                        <span className="text-xs text-muted ml-1">
-                          ({positive ? "+" : ""}
-                          {formatUSD(h.totalValue - h.totalCost)})
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs text-muted">내 수익률</span>
-                    <span
-                      className={`text-lg font-bold font-mono ${
-                        positive ? "text-positive" : "text-negative"
-                      }`}
-                    >
-                      {formatPercent(h.returnRate)}
-                    </span>
-                  </div>
-
-                  <div
-                    className={`text-sm text-center py-2 px-3 rounded-lg ${
-                      positive ? "bg-positive-bg" : "bg-negative-bg"
-                    }`}
-                  >
-                    {getStockComment(h.returnRate)}
-                  </div>
-                </section>
-              );
-            })()
+          {holdings.length > 0 ? (
+            <div className="flex flex-col gap-6">
+              {holdings.map((holding) => (
+                <HoldingCard
+                  key={`${holding.exchange}:${holding.symbol}`}
+                  holding={holding}
+                  priceDetail={details[holding.symbol]?.priceDetail ?? null}
+                  comment={getStockComment(holding.returnRate)}
+                  weightPercent={
+                    showWeight
+                      ? (holding.totalValue / totalValue) * 100
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
           ) : (
             <section className="rounded-xl border border-card-border bg-card p-6 flex items-center justify-center">
               <div className="text-center text-muted">
@@ -426,8 +360,8 @@ export default async function Home() {
             </section>
           )}
 
-          {/* 멤버 현황 */}
-          <section className="rounded-xl border border-card-border bg-card">
+          {/* 멤버 현황 — 종목이 여러 개라 왼쪽이 길어지면 데스크톱에서 따라오도록 sticky */}
+          <section className="rounded-xl border border-card-border bg-card lg:sticky lg:top-6 self-start">
             <div className="px-6 py-4 border-b border-card-border">
               <h2 className="font-semibold">멤버 ({memberList.length}명)</h2>
             </div>
@@ -482,18 +416,8 @@ export default async function Home() {
           </section>
         </div>
 
-        {/* 주가 차트 */}
-        {chartData.length > 0 ? (
-          <StockChart
-            data={chartData}
-            symbol={h?.symbol || ""}
-            avgPrice={h?.avgPrice}
-          />
-        ) : (
-          <section className="rounded-xl border border-card-border bg-card p-6 text-center text-muted text-sm">
-            차트 데이터가 없습니다
-          </section>
-        )}
+        {/* 주가 차트 (종목별, 2개 이상이면 탭) */}
+        <HoldingsChart items={chartItems} />
 
         {/* 방명록 */}
         <CommentsSection />

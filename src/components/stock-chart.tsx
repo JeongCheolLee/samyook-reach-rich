@@ -66,7 +66,7 @@ export function StockChart({
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data}>
             <defs>
-              <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id={`priceGradient-${symbol}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={color} stopOpacity={0.2} />
                 <stop offset="100%" stopColor={color} stopOpacity={0} />
               </linearGradient>
@@ -100,7 +100,7 @@ export function StockChart({
               dataKey="price"
               stroke={color}
               strokeWidth={2}
-              fill="url(#priceGradient)"
+              fill={`url(#priceGradient-${symbol})`}
             />
             {hasAvg && (
               <ReferenceLine
