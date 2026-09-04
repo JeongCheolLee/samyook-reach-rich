@@ -48,6 +48,22 @@ function signClass(value: number) {
   return value >= 0 ? "text-positive" : "text-negative";
 }
 
+function impactSummary(total: number, fxGain: number) {
+  const totalAmount = formatKRW(Math.abs(total));
+  const fxAmount = formatKRW(Math.abs(fxGain));
+
+  if (total < 0 && fxGain < 0) {
+    return `전체 손실은 ${totalAmount}, 그중 ${fxAmount}이 환율 손실이에요`;
+  }
+  if (total >= 0 && fxGain >= 0) {
+    return `전체 수익은 ${totalAmount}, 환율이 ${fxAmount}을 보탰어요`;
+  }
+  if (fxGain < 0) {
+    return `전체 수익은 ${totalAmount}, 환율이 ${fxAmount}을 줄였어요`;
+  }
+  return `전체 손실은 ${totalAmount}, 환율이 ${fxAmount}을 만회했어요`;
+}
+
 const PANEL_ID = "return-breakdown-panel";
 
 /**
@@ -76,7 +92,7 @@ export function ReturnBreakdown({
   assetTooltip: string[];
   /** 환율 분해 결과. null이면 카드 3개만 렌더하고 펼침 없음 */
   fx: FxBreakdown | null;
-  /** 그 외 (예수금 환산·결제 전 매수·반올림 잔차) */
+  /** 예수금·결제 대기 조정 (예수금 환산·결제 전 매수·반올림 잔차) */
   other: number;
   /** 서버에서 1회 선택한 한 줄 멘트 */
   comment: string;
@@ -86,6 +102,8 @@ export function ReturnBreakdown({
   const [open, setOpen] = useState(true);
   const positive = returnRate >= 0;
   const rateValue = `${formatPercent(returnRate)} (${formatSignedKRW(total)})`;
+  const settledQty = fx?.settledLots.reduce((sum, lot) => sum + lot.quantity, 0) ?? 0;
+  const pendingQty = fx?.pendingLots.reduce((sum, lot) => sum + lot.quantity, 0) ?? 0;
   // 막대 길이 기준 = 4항목 절댓값 중 최대 (가장 큰 항목이 100%)
   const scale = fx
     ? Math.max(
@@ -145,9 +163,7 @@ export function ReturnBreakdown({
           className="flex flex-col gap-3 rounded-xl border border-card-border bg-card p-4 sm:px-6 sm:py-5"
         >
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold">
-              수익률 {formatPercent(returnRate)}, 환율이 얼마나 바꿨는지
-            </h2>
+            <h2 className="text-sm font-semibold">{impactSummary(total, fx.fxGain)}</h2>
             <span className="hidden text-xs text-muted sm:inline">원화 환산 기준</span>
           </div>
 
@@ -155,32 +171,32 @@ export function ReturnBreakdown({
 
           <div className="flex flex-col">
             <BreakdownRow
-              label="주가 영향"
+              label="주가 변동"
               value={fx.stockGain}
               scale={scale}
               tone={fx.stockGain >= 0 ? "positive" : "negative"}
             />
             <BreakdownRow
-              label="환율 영향"
+              label="환율 변동"
               value={fx.fxGain}
-              hint={`결제 완료 달러 ${formatUSD(fx.usdSettled)}에 달러당 ${new Intl.NumberFormat(
+              hint={`결제 완료 ${formatUSD(fx.usdSettled)} × 환율 ${
+                fx.rateNow >= fx.avgRate ? "상승" : "하락"
+              } ${new Intl.NumberFormat(
                 "ko-KR",
                 { maximumFractionDigits: 1 }
-              ).format(Math.abs(fx.rateNow - fx.avgRate))}원씩 ${
-                fx.rateNow >= fx.avgRate ? "이득" : "손해"
-              }`}
+              ).format(Math.abs(fx.rateNow - fx.avgRate))}원`}
               scale={scale}
               tone={fx.fxGain >= 0 ? "positive" : "negative"}
             />
             <BreakdownRow
-              label="거래 비용"
+              label="매매 수수료"
               value={-fx.fees}
-              hint={`매수 ${fx.settledLots.length + fx.pendingLots.length}건 국내수수료`}
+              hint={`매수 ${fx.settledLots.length + fx.pendingLots.length}건에 든 국내수수료`}
               scale={scale}
               tone="neutral"
             />
             <BreakdownRow
-              label="그 외"
+              label="예수금·결제 대기 조정"
               value={other}
               hint={otherHint(fx)}
               scale={scale}
@@ -189,9 +205,7 @@ export function ReturnBreakdown({
           </div>
 
           <div className="flex items-center justify-between gap-3 border-t border-card-border pt-2.5">
-            <span className="text-sm text-muted">
-              합계 <span className="text-xs">· 위 수익률과 같은 숫자</span>
-            </span>
+            <span className="text-sm text-muted">전체 평가손익</span>
             <span className={`font-mono font-semibold ${signClass(total)}`}>
               {formatSignedKRW(total)}
             </span>
@@ -208,9 +222,9 @@ export function ReturnBreakdown({
           <LotDetails fx={fx} heldQty={heldQty} />
 
           <p className="text-xs leading-relaxed text-muted">
-            환율 영향은 KIS 매수 시 적용환율 기준이에요. 달러 예수금 환산과 결제 전 매수는
-            &quot;그 외&quot;에 들어가요. 큰 환율은 KIS 고시환율, 차트는 시장환율(원/달러
-            KMB)이라 소폭 다를 수 있어요.
+            환율 손익은 결제가 완료된 {settledQty}주만 계산해요. 달러 예수금과 결제 대기{" "}
+            {pendingQty}주는 &quot;예수금·결제 대기 조정&quot;에 포함돼요. 표시 환율은 KIS
+            고시환율 기준이라 차트와 소폭 다를 수 있어요.
           </p>
         </section>
       )}
@@ -218,13 +232,13 @@ export function ReturnBreakdown({
   );
 }
 
-/** "그 외"에 실제로 무엇이 들어있는지 상황에 맞게 설명 */
+/** 예수금·결제 대기 조정에 실제로 무엇이 들어있는지 상황에 맞게 설명 */
 function otherHint(fx: FxBreakdown): string {
   const parts = ["달러 예수금 환산"];
   if (fx.pendingLots.length > 0) {
     const first = fx.pendingLots[0];
     parts.push(
-      `${formatDate(first.tradeDate)} 매수 결제 전, ${formatDate(first.settleDate)} 확정`
+      `${formatDate(first.tradeDate)} 매수분은 ${formatDate(first.settleDate)} 환율 확정`
     );
   }
   return parts.join(" · ");
@@ -235,7 +249,7 @@ function RateStrip({ fx }: { fx: FxBreakdown }) {
   const lower = fx.rateNow < fx.avgRate;
   return (
     <div className="flex flex-col gap-1 rounded-lg bg-card-border/30 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-      <span className="text-xs text-muted">달러를 산 환율과 지금</span>
+      <span className="text-xs text-muted">평균 매수환율 → 현재환율</span>
       <span className="font-mono font-semibold">
         {formatRate(fx.avgRate)}
         <span className="mx-1.5 font-normal text-muted" aria-hidden="true">
@@ -321,7 +335,7 @@ function LotDetails({ fx, heldQty }: { fx: FxBreakdown; heldQty: number }) {
     <details className="group rounded-lg border border-card-border">
       <summary className="flex min-h-11 cursor-pointer select-none items-center justify-between gap-3 px-3 py-2 text-sm list-none [&::-webkit-details-marker]:hidden">
         <span className="flex flex-col sm:block">
-          <span>어떤 매수에서 환율 손익이 났는지</span>
+          <span>매수별 환율 손익 보기</span>
           <span className="text-xs text-muted sm:text-sm">
             <span className="hidden sm:inline"> · </span>매수 {lots.length}건
             {fx.pendingLots.length > 0 && ` · 결제 대기 ${fx.pendingLots.length}건`}
