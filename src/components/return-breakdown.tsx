@@ -53,7 +53,7 @@ function impactSummary(total: number, fxGain: number) {
   const fxAmount = formatKRW(Math.abs(fxGain));
 
   if (total < 0 && fxGain < 0) {
-    return `전체 손실은 ${totalAmount}, 그중 ${fxAmount}이 환율 손실이에요`;
+    return `전체 손실은 ${totalAmount}, 환율로는 ${fxAmount}을 잃었어요`;
   }
   if (total >= 0 && fxGain >= 0) {
     return `전체 수익은 ${totalAmount}, 환율이 ${fxAmount}을 보탰어요`;
@@ -196,7 +196,7 @@ export function ReturnBreakdown({
               tone="neutral"
             />
             <BreakdownRow
-              label="예수금·결제 대기 조정"
+              label={fx.pendingLots.length > 0 ? "예수금·결제 대기 조정" : "달러 예수금 조정"}
               value={other}
               hint={otherHint(fx)}
               scale={scale}
@@ -222,9 +222,15 @@ export function ReturnBreakdown({
           <LotDetails fx={fx} heldQty={heldQty} />
 
           <p className="text-xs leading-relaxed text-muted">
-            환율 손익은 결제가 완료된 {settledQty}주만 계산해요. 달러 예수금과 결제 대기{" "}
-            {pendingQty}주는 &quot;예수금·결제 대기 조정&quot;에 포함돼요. 표시 환율은 KIS
-            고시환율 기준이라 차트와 소폭 다를 수 있어요.
+            환율 손익은 결제가 완료된 {settledQty}주 기준이에요. {pendingQty > 0 ? (
+              <>
+                달러 예수금과 결제 대기 {pendingQty}주는
+                &quot;예수금·결제 대기 조정&quot;에 포함돼요.{" "}
+              </>
+            ) : (
+              <>달러 예수금 환산은 &quot;달러 예수금 조정&quot;에 포함돼요. </>
+            )}
+            표시 환율은 KIS 고시환율 기준이라 차트와 소폭 다를 수 있어요.
           </p>
         </section>
       )}
