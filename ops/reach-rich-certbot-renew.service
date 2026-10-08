@@ -1,0 +1,11 @@
+[Unit]
+Description=Renew REACH RICH HTTPS certificate
+After=network-online.target nginx.service
+Wants=network-online.target
+ConditionPathExists=/etc/letsencrypt/renewal/36-reach-rich.jeongcheol.cloud.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/certbot renew --non-interactive --quiet --cert-name 36-reach-rich.jeongcheol.cloud --deploy-hook /usr/local/sbin/reach-rich-certbot-deploy
+TimeoutStartSec=600
+UMask=0077

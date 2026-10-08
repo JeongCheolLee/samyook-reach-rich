@@ -1,17 +1,7 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-
-const ADMIN_USER = process.env.ADMIN_USERNAME!;
-const ADMIN_PASS = process.env.ADMIN_PASSWORD!;
-const TOKEN = Buffer.from(`${ADMIN_USER}:${ADMIN_PASS}`).toString("base64");
+import { isAdmin } from "@/server/auth";
 
 export async function GET() {
-  const cookieStore = await cookies();
-  const adminToken = cookieStore.get("admin_token");
-
-  if (adminToken?.value === TOKEN) {
-    return NextResponse.json({ authenticated: true });
-  }
-
-  return NextResponse.json({ authenticated: false }, { status: 401 });
+  const authenticated = await isAdmin();
+  return NextResponse.json({ authenticated }, { status: authenticated ? 200 : 401, headers: { "Cache-Control": "no-store" } });
 }

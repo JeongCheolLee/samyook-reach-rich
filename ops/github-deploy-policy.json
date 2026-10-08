@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "UploadOnlyApplicationReleases",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:AbortMultipartUpload"],
+      "Resource": "arn:aws:s3:::reach-rich-148617059023-apne2/releases/ci/*"
+    },
+    {
+      "Sid": "RunOnlyApplicationDeployment",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2:148617059023:document/ReachRich-Deploy",
+        "arn:aws:ec2:ap-northeast-2:148617059023:instance/i-08c4b50d904fec61e"
+      ]
+    },
+    {
+      "Sid": "ReadDeploymentResult",
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*"
+    }
+  ]
+}

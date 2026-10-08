@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Member } from "@/lib/mock-data";
+import type { MemberRecord } from "@/lib/members";
 
 interface Comment {
   id: string;
@@ -40,7 +40,7 @@ function accessInfo(c: Comment): string {
 }
 
 export function CommentsSection() {
-  const [members, setMembers] = useState<Member[]>([]);
+  const [members, setMembers] = useState<MemberRecord[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [author, setAuthor] = useState("");
   const [text, setText] = useState("");
@@ -68,7 +68,7 @@ export function CommentsSection() {
         next.add(id);
         // 펼칠 때 답글 작성자 기본값 세팅(아직 없으면)
         setReplyAuthors((a) =>
-          a[id] ? a : { ...a, [id]: author || members[0]?.name || "" }
+          a[id] ? a : { ...a, [id]: author || members[0]?.id || "" }
         );
       }
       return next;
@@ -87,7 +87,7 @@ export function CommentsSection() {
         setMembers(m);
         setComments(c);
         setIsAdmin(admin);
-        if (m.length > 0) setAuthor((prev) => prev || m[0].name);
+        if (m.length > 0) setAuthor((prev) => prev || m[0].id);
         setLoading(false);
       })
       .catch(() => {
@@ -142,7 +142,7 @@ export function CommentsSection() {
     const who =
       parentId === null
         ? author
-        : replyAuthors[parentId] || author || members[0]?.name || "";
+        : replyAuthors[parentId] || author || members[0]?.id || "";
     const raw = parentId === null ? text : replyDrafts[parentId] ?? "";
     const trimmed = raw.trim();
     if (!who || !trimmed || posting) return;
@@ -152,7 +152,7 @@ export function CommentsSection() {
       const res = await fetch("/api/comments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ author: who, text: trimmed, parentId }),
+        body: JSON.stringify({ authorId: who, text: trimmed, parentId }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -215,7 +215,7 @@ export function CommentsSection() {
             className="h-10 px-2 rounded-lg border border-card-border bg-background text-sm"
           >
             {members.map((m) => (
-              <option key={m.name} value={m.name}>
+              <option key={m.id} value={m.id}>
                 {m.icon} {m.name}
               </option>
             ))}
@@ -334,7 +334,7 @@ export function CommentsSection() {
                         className="h-9 px-2 rounded-lg border border-card-border bg-background text-sm"
                       >
                         {members.map((m) => (
-                          <option key={m.name} value={m.name}>
+                          <option key={m.id} value={m.id}>
                             {m.icon} {m.name}
                           </option>
                         ))}
@@ -358,7 +358,7 @@ export function CommentsSection() {
                       <button
                         onClick={() => submit(c.id)}
                         disabled={
-                          !(replyAuthors[c.id] || members[0]?.name) ||
+                          !(replyAuthors[c.id] || members[0]?.id) ||
                           !(replyDrafts[c.id] ?? "").trim() ||
                           posting
                         }

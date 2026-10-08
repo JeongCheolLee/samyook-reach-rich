@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "REACH RICH | 삼육 투자 모임",
   description: "삼육, 올해엔 어디로 갈 것인가? 아니 가긴 가나..?",
-  metadataBase: new URL("https://36-reach-rich.vercel.app"),
+  metadataBase: new URL(process.env.APP_URL || "http://localhost:3000"),
 };
 
 export default function RootLayout({
