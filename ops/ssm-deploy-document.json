@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Deploy a checksum-verified REACH RICH main-branch release using the fixed root-owned runner. Caller authorization must be restricted to the repository main OIDC role and the designated EC2 instance.",
+  "parameters": {
+    "ReleaseId": {
+      "type": "String",
+      "description": "Full lowercase git SHA followed by GitHub run ID and attempt",
+      "allowedPattern": "^[0-9a-f]{40}-[0-9]+-[0-9]+$",
+      "interpolationType": "ENV_VAR"
+    },
+    "Sha256": {
+      "type": "String",
+      "description": "Lowercase SHA-256 checksum of the S3 tar.gz artifact",
+      "allowedPattern": "^[0-9a-f]{64}$",
+      "interpolationType": "ENV_VAR"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "DeployVerifiedRelease",
+      "precondition": { "StringEquals": ["platformType", "Linux"] },
+      "inputs": {
+        "timeoutSeconds": "600",
+        "runCommand": [
+          "set -eu",
+          "exec /usr/bin/timeout --signal=TERM --kill-after=75s 480s /usr/local/sbin/reach-rich-deploy \"$SSM_ReleaseId\" \"$SSM_Sha256\""
+        ]
+      }
+    }
+  ]
+}

@@ -172,6 +172,18 @@ nginx -t
 
 전체 환경변수나 스냅샷 내용을 진단 로그에 출력하지 않습니다. 메모리 한도 초과나 DB 연결 부족이 발생하면 서비스 로그와 기존 서비스의 자원 사용량을 함께 확인합니다.
 
+## GitHub Actions 자동 배포
+
+`.github/workflows/deploy.yml`은 `main` 대상 PR과 `main` push에서 PostgreSQL 16으로 검증합니다. 인증용 `reach_rich_auth_test`와 도메인용 `reach_rich_domain_test` DB를 분리하고, `npm ci`, lint, Next.js 타입 생성·TypeScript 검사, 전체 테스트를 통과한 뒤 Linux amd64 standalone 앱을 빌드합니다. PR에서는 AWS 배포를 실행하지 않습니다.
+
+`main` push 또는 `main`을 선택한 수동 실행은 검증된 빌드를 운영 서버에 배포합니다. 저장소 Actions 변수 `AWS_DEPLOY_ROLE_ARN`에 전용 IAM 역할을 지정하며, GitHub OIDC로 임시 AWS 자격 증명을 발급받습니다. 이 역할의 신뢰 조건은 이 저장소의 `refs/heads/main`으로 제한합니다. AWS 액세스 키를 GitHub Secret으로 저장할 필요는 없습니다. 워크플로에 GitHub Environment를 추가하면 OIDC subject가 달라지므로 IAM 신뢰 조건도 함께 검토해야 합니다.
+
+배포 파일은 `releases/ci/<커밋 SHA>-<실행 ID>-<시도 번호>.tar.gz`에 저장하고 SHA-256과 아카이브 내부 `RELEASE_ID`를 검증합니다. 워크플로는 지정된 EC2 인스턴스에 `ReachRich-Deploy` SSM 문서만 실행합니다. 서버는 백업·마이그레이션·release 교체·로컬 헬스체크를 수행하고 실제 활성 release ID를 확인해 반환합니다. Actions는 최대 10분 동안 완료를 확인한 뒤 공개 HTTPS `/api/health` 응답도 검증합니다. DB 비밀번호와 증권 API 키는 서버 환경 파일에 유지합니다.
+
+운영 배포는 동시에 하나만 실행하며 진행 중인 배포를 새 실행이 취소하지 않습니다. 배포 시작 전과 SSM 실행 직전에 원격 `main`의 최신 SHA를 확인하므로 이미 뒤처진 실행은 실패 처리됩니다. 실패했거나 제한 시간을 넘긴 실행은 SSM 상태와 서버 로그를 확인한 뒤 재시도합니다. 스키마는 자동으로 되돌리지 않으므로 DB 변경은 이전 앱과의 호환성을 유지해야 합니다.
+
+`vercel.json`의 `git.deploymentEnabled: false`는 기존 Vercel Git 연동의 자동 배포를 중지합니다. 기존 배포 URL의 WAF 차단도 유지하여 AWS 전환 이후 원본 Redis 앱에서 요청을 처리하지 않도록 합니다.
+
 ## 인증서 자동 갱신
 
 기존 서버의 다른 서비스용 Certbot 타이머는 특정 인증서만 대상으로 하므로 이 앱에는 별도 `reach-rich-certbot-renew.timer`를 사용합니다. `ops/reach-rich-certbot-renew.service`와 타이머를 `/etc/systemd/system/`에, `ops/certbot-deploy.sh`를 root 소유 실행 파일 `/usr/local/sbin/reach-rich-certbot-deploy`로 설치합니다. 기존 서비스의 타이머는 변경하지 않습니다.
