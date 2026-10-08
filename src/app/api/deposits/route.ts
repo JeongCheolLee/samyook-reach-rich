@@ -1,88 +1,38 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { addDeposit, deleteDeposit, listDeposits } from "@/lib/deposits";
-import { getMembers, saveMembers } from "@/lib/members";
-
-const ADMIN_USER = process.env.ADMIN_USERNAME!;
-const ADMIN_PASS = process.env.ADMIN_PASSWORD!;
-const TOKEN = Buffer.from(`${ADMIN_USER}:${ADMIN_PASS}`).toString("base64");
-
-async function isAdmin() {
-  const cookieStore = await cookies();
-  return cookieStore.get("admin_token")?.value === TOKEN;
-}
+import { getMembers } from "@/lib/members";
+import { requireAdmin } from "@/server/auth";
+import { apiError, validId } from "@/server/api-errors";
 
 export async function GET() {
-  const deposits = await listDeposits();
-  return NextResponse.json(deposits);
+  return NextResponse.json(await listDeposits());
 }
 
 export async function POST(request: Request) {
-  if (!(await isAdmin())) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
+  const body = await request.json().catch(() => null);
+  if (!body || !validId(body.memberId) || !Number.isSafeInteger(body.amount) || body.amount === 0 ||
+      !Number.isSafeInteger(body.depositedAt) || !Number.isFinite(new Date(body.depositedAt).getTime()) ||
+      (body.memo !== undefined && (typeof body.memo !== "string" || body.memo.length > 1000))) {
+    return NextResponse.json({ error: "멤버, 금액 또는 날짜를 확인해주세요" }, { status: 400 });
   }
-
-  const body = await request.json();
-  const memberName = String(body?.memberName ?? "").trim();
-  const amount = Number(body?.amount);
-  const depositedAt = Number(body?.depositedAt);
-  const memo = typeof body?.memo === "string" ? body.memo : undefined;
-
-  if (!memberName || !Number.isFinite(amount) || amount === 0) {
-    return NextResponse.json({ error: "invalid input" }, { status: 400 });
-  }
-  if (!Number.isFinite(depositedAt)) {
-    return NextResponse.json({ error: "invalid date" }, { status: 400 });
-  }
-
-  const members = await getMembers();
-  const member = members.find((m) => m.name === memberName);
-  if (!member) {
-    return NextResponse.json({ error: "member not found" }, { status: 404 });
-  }
-
-  const deposit = await addDeposit({ memberName, amount, depositedAt, memo });
-
-  const updatedMembers = members.map((m) =>
-    m.name === memberName
-      ? { ...m, totalContributed: m.totalContributed + amount }
-      : m
-  );
-  await saveMembers(updatedMembers);
-
-  return NextResponse.json({
-    deposit,
-    deposits: await listDeposits(),
-    members: await getMembers(),
-  });
+  try {
+    const deposit = await addDeposit({ memberId: body.memberId, amount: body.amount, depositedAt: body.depositedAt, memo: body.memo });
+    const [deposits, members] = await Promise.all([listDeposits(), getMembers()]);
+    return NextResponse.json({ deposit, deposits, members });
+  } catch (error) { return apiError(error); }
 }
 
 export async function DELETE(request: Request) {
-  if (!(await isAdmin())) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
-  if (!id) {
-    return NextResponse.json({ error: "missing id" }, { status: 400 });
-  }
-
-  const removed = await deleteDeposit(id);
-  if (!removed) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
-  }
-
-  const members = await getMembers();
-  const updatedMembers = members.map((m) =>
-    m.name === removed.memberName
-      ? { ...m, totalContributed: m.totalContributed - removed.amount }
-      : m
-  );
-  await saveMembers(updatedMembers);
-
-  return NextResponse.json({
-    deposits: await listDeposits(),
-    members: await getMembers(),
-  });
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
+  const id = new URL(request.url).searchParams.get("id");
+  if (!validId(id)) return NextResponse.json({ error: "잘못된 id입니다" }, { status: 400 });
+  try {
+    const removed = await deleteDeposit(id);
+    if (!removed) return NextResponse.json({ error: "기록을 찾을 수 없습니다" }, { status: 404 });
+    const [deposits, members] = await Promise.all([listDeposits(), getMembers()]);
+    return NextResponse.json({ deposits, members });
+  } catch (error) { return apiError(error); }
 }

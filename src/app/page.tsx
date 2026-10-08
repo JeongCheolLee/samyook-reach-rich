@@ -178,7 +178,6 @@ export default async function Home() {
   let holdings: HoldingData[] = [];
   // 종목코드 → 차트/현재가 상세
   const details: Record<string, HoldingDetail> = {};
-  let totalInvested = 0;
   let totalValue = 0;
   let depositUSD = 0; // 달러 잔고
   let depositKRW = 0; // 원화 잔고
@@ -211,7 +210,6 @@ export default async function Home() {
       returnRate: Number(h.evlu_pfls_rt || 0),
     }));
 
-    totalInvested = holdings.reduce((s, h) => s + h.totalCost, 0);
     totalValue = holdings.reduce((s, h) => s + h.totalValue, 0);
 
     // 외화 예수금 파싱
@@ -243,8 +241,8 @@ export default async function Home() {
     holdings.forEach((holding, i) => {
       details[holding.symbol] = detailList[i];
     });
-  } catch (e) {
-    apiError = e instanceof Error ? e.message : "Unknown error";
+  } catch {
+    apiError = "투자 현황을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.";
   }
 
   const memberList = await getMembers();

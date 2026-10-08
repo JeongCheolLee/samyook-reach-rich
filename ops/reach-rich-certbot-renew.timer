@@ -1,0 +1,10 @@
+[Unit]
+Description=Twice daily REACH RICH certificate renewal check
+
+[Timer]
+OnCalendar=*-*-* 02,14:00:00 UTC
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

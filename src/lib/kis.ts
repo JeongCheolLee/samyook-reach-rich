@@ -1,149 +1,12 @@
 // 한국투자증권 Open API 클라이언트 (실전투자)
 
-import { Redis } from "@upstash/redis";
+import { getAccessToken, invalidateToken } from "../server/kis-token";
 
 const BASE_URL = process.env.KIS_BASE_URL!;
 const APP_KEY = process.env.KIS_APP_KEY!;
 const APP_SECRET = process.env.KIS_APP_SECRET!;
 const CANO = process.env.KIS_ACCOUNT_NO!;
 const ACNT_PRDT_CD = process.env.KIS_ACCOUNT_PRDT!;
-
-const TOKEN_KEY = "kis:access_token";
-const TOKEN_LOCK_KEY = "kis:access_token:lock";
-
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL!,
-  token: process.env.KV_REST_API_TOKEN!,
-});
-
-type StoredToken = { token: string; expiresAt: number };
-
-// 메모리 캐시 (웜 스타트 시 재사용)
-let cachedToken: StoredToken | null = null;
-// 동일 인스턴스 내 동시 요청 중복 발급 방지
-let tokenPromise: Promise<string> | null = null;
-
-/** Access Token 발급
- *  우선순위: 메모리 → Redis → KIS 재발급
- *  Redis 분산 락으로 여러 서버리스 인스턴스의 동시 재발급을 방지 (KIS 1분 1회 제한 회피)
- */
-async function getAccessToken(forceRefresh = false): Promise<string> {
-  if (forceRefresh) {
-    cachedToken = null;
-  } else {
-    if (cachedToken && Date.now() < cachedToken.expiresAt) {
-      return cachedToken.token;
-    }
-
-    const stored = await redis.get<StoredToken>(TOKEN_KEY);
-    if (stored && Date.now() < stored.expiresAt) {
-      cachedToken = stored;
-      return stored.token;
-    }
-  }
-
-  if (tokenPromise) return tokenPromise;
-
-  tokenPromise = acquireLockAndFetch();
-  try {
-    return await tokenPromise;
-  } finally {
-    tokenPromise = null;
-  }
-}
-
-/** 캐시된 토큰 강제 무효화 (401 복구용) */
-async function invalidateToken(): Promise<void> {
-  cachedToken = null;
-  try {
-    await redis.del(TOKEN_KEY);
-  } catch {
-    // Redis 장애여도 메모리 캐시는 비웠으니 다음 호출에서 재발급 시도
-  }
-}
-
-/** Redis를 주기적으로 폴링해서 다른 인스턴스가 발급한 토큰을 기다림 */
-async function waitForSharedToken(
-  attempts: number,
-  intervalMs: number
-): Promise<string | null> {
-  for (let i = 0; i < attempts; i++) {
-    await new Promise((r) => setTimeout(r, intervalMs));
-    const stored = await redis.get<StoredToken>(TOKEN_KEY);
-    if (stored && Date.now() < stored.expiresAt) {
-      cachedToken = stored;
-      return stored.token;
-    }
-  }
-  return null;
-}
-
-async function acquireLockAndFetch(): Promise<string> {
-  // SET NX EX 60 → 60초 락
-  const gotLock = await redis.set(TOKEN_LOCK_KEY, "1", { nx: true, ex: 60 });
-
-  if (!gotLock) {
-    // 다른 인스턴스가 발급 중 → 최대 10초까지 Redis 폴링
-    const shared = await waitForSharedToken(20, 500);
-    if (shared) return shared;
-    // 끝내 못 받으면 KIS 호출 (남의 락은 건드리지 않음)
-    return fetchToken();
-  }
-
-  try {
-    return await fetchToken();
-  } finally {
-    await redis.del(TOKEN_LOCK_KEY);
-  }
-}
-
-async function fetchToken(): Promise<string> {
-  const res = await fetch(`${BASE_URL}/oauth2/tokenP`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      grant_type: "client_credentials",
-      appkey: APP_KEY,
-      appsecret: APP_SECRET,
-    }),
-  });
-
-  const text = await res.text();
-  let data: {
-    access_token?: string;
-    expires_in?: number;
-    error_code?: string;
-    error_description?: string;
-  } | null = null;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = null;
-  }
-
-  // KIS "1분당 1건 발급" 레이트리밋 (EGW00133) → Redis 폴링으로 대기
-  if (
-    data?.error_code === "EGW00133" ||
-    /EGW00133/.test(text) ||
-    /1분당 1건/.test(text)
-  ) {
-    const shared = await waitForSharedToken(20, 500);
-    if (shared) return shared;
-    throw new Error(`Token 발급 레이트리밋 (EGW00133): ${text}`);
-  }
-
-  if (!res.ok || !data?.access_token || !data?.expires_in) {
-    throw new Error(`Token 발급 실패: ${res.status} ${text}`);
-  }
-
-  const expiresAt = Date.now() + (data.expires_in - 3600) * 1000;
-  cachedToken = { token: data.access_token, expiresAt };
-
-  const ttlSeconds = Math.max(60, Math.floor((expiresAt - Date.now()) / 1000));
-  await redis.set(TOKEN_KEY, cachedToken, { ex: ttlSeconds });
-
-  return cachedToken.token;
-}
 
 /** KIS가 돌려주는 "토큰이 죽었다" 계열 에러 판별 */
 function isTokenError(status: number, text: string): boolean {
@@ -155,6 +18,11 @@ function isTokenError(status: number, text: string): boolean {
   return false;
 }
 
+async function readKisJson(response: Response) {
+  try { return await response.json(); }
+  catch { throw new Error("KIS API 응답 형식 오류"); }
+}
+
 /** 공통 GET 호출 헬퍼 */
 async function kisGet(
   path: string,
@@ -163,11 +31,12 @@ async function kisGet(
   retried = false
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
-  const token = await getAccessToken(retried);
+  const token = await getAccessToken();
   const url = new URL(path, BASE_URL);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
   const res = await fetch(url.toString(), {
+    signal: AbortSignal.timeout(15_000),
     headers: {
       authorization: `Bearer ${token}`,
       appkey: APP_KEY,
@@ -180,13 +49,13 @@ async function kisGet(
   if (!res.ok) {
     const text = await res.text();
     if (!retried && isTokenError(res.status, text)) {
-      await invalidateToken();
+      await invalidateToken(token);
       return kisGet(path, trId, params, true);
     }
-    throw new Error(`KIS API 에러 [${trId}]: ${res.status} ${text}`);
+    throw new Error(`KIS API 에러 [${trId}]: HTTP ${res.status}`);
   }
 
-  return res.json();
+  return readKisJson(res);
 }
 
 /** 공통 POST 호출 헬퍼 */
@@ -197,9 +66,10 @@ async function kisPost(
   retried = false
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
-  const token = await getAccessToken(retried);
+  const token = await getAccessToken();
 
   const res = await fetch(`${BASE_URL}${path}`, {
+    signal: AbortSignal.timeout(15_000),
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
@@ -214,13 +84,13 @@ async function kisPost(
   if (!res.ok) {
     const text = await res.text();
     if (!retried && isTokenError(res.status, text)) {
-      await invalidateToken();
+      await invalidateToken(token);
       return kisPost(path, trId, body, true);
     }
-    throw new Error(`KIS API 에러 [${trId}]: ${res.status} ${text}`);
+    throw new Error(`KIS API 에러 [${trId}]: HTTP ${res.status}`);
   }
 
-  return res.json();
+  return readKisJson(res);
 }
 
 /** 해외주식 잔고 조회 */
@@ -422,11 +292,12 @@ async function kisGetRaw(
   retried = false
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<{ res: Response; body: any }> {
-  const token = await getAccessToken(retried);
+  const token = await getAccessToken();
   const url = new URL(path, BASE_URL);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
   const res = await fetch(url.toString(), {
+    signal: AbortSignal.timeout(15_000),
     headers: {
       authorization: `Bearer ${token}`,
       appkey: APP_KEY,
@@ -440,17 +311,15 @@ async function kisGetRaw(
   if (!res.ok) {
     const text = await res.text();
     if (!retried && isTokenError(res.status, text)) {
-      await invalidateToken();
+      await invalidateToken(token);
       return kisGetRaw(path, trId, params, extraHeaders, true);
     }
-    throw new Error(`KIS API 에러 [${trId}]: ${res.status} ${text}`);
+    throw new Error(`KIS API 에러 [${trId}]: HTTP ${res.status}`);
   }
 
-  const body = await res.json();
+  const body = await readKisJson(res);
   if (body?.rt_cd !== undefined && body.rt_cd !== "0") {
-    throw new Error(
-      `KIS API 에러 [${trId}]: ${String(body.msg_cd ?? "")} ${String(body.msg1 ?? "")}`.trim()
-    );
+    throw new Error(`KIS API 에러 [${trId}]: 업무 응답 오류`);
   }
   return { res, body };
 }

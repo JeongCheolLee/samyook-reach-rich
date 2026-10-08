@@ -74,14 +74,13 @@ export async function GET() {
         returnAmount: totalValue - totalInvested,
       },
       charts, // 종목코드 → 30일 종가
-      raw: balance, // 디버깅용
     });
   } catch (error) {
     console.error("Portfolio API error:", error);
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "투자 현황을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
       },
       { status: 500 }
     );

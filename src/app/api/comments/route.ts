@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { requireAdmin } from "@/server/auth";
+import { apiError, validId } from "@/server/api-errors";
 import { addComment, deleteComment, listComments } from "@/lib/comments";
 import { getMembers } from "@/lib/members";
 import { parseUserAgent } from "@/lib/useragent";
@@ -16,11 +17,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
-  const author = typeof body?.author === "string" ? body.author.trim() : "";
+  const authorId = body?.authorId;
   const text = typeof body?.text === "string" ? body.text.trim() : "";
   const parentId = typeof body?.parentId === "string" ? body.parentId : null;
 
-  if (!author || !text) {
+  if (!validId(authorId) || !text) {
     return NextResponse.json(
       { error: "이름과 내용을 입력해주세요" },
       { status: 400 }
@@ -34,12 +35,16 @@ export async function POST(request: Request) {
   }
 
   const members = await getMembers();
-  const member = members.find((m) => m.name === author);
+  const member = members.find((m) => m.id === authorId);
   if (!member) {
     return NextResponse.json(
       { error: "등록된 멤버가 아닙니다" },
       { status: 400 }
     );
+  }
+
+  if (body.parentId !== undefined && body.parentId !== null && !validId(body.parentId)) {
+    return NextResponse.json({ error: "잘못된 댓글 id입니다" }, { status: 400 });
   }
 
   // 답글이면 부모 검증 (존재 + 답글에 답글 금지)
@@ -70,28 +75,26 @@ export async function POST(request: Request) {
   const device = parseUserAgent(ua);
   const { geo, isp } = await lookup(ip);
 
-  const comment = await addComment(member.name, member.icon, text, parentId, {
-    ip,
-    ua,
-    device,
-    geo,
-    isp,
-  });
-  return NextResponse.json(comment);
+  try {
+    const comment = await addComment(member.name, member.icon, text, parentId, {
+      ip, ua, device, geo, isp,
+    });
+    return NextResponse.json(comment);
+  } catch (error) { return apiError(error); }
 }
 
 export async function DELETE(request: Request) {
-  const cookieStore = await cookies();
-  if (!cookieStore.get("admin_token")) {
-    return NextResponse.json({ error: "권한 없음" }, { status: 401 });
-  }
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
-  if (!id) {
+  if (!validId(id)) {
     return NextResponse.json({ error: "id 필요" }, { status: 400 });
   }
 
-  const removed = await deleteComment(id);
-  return NextResponse.json({ removed });
+  try {
+    const removed = await deleteComment(id);
+    return NextResponse.json({ removed });
+  } catch (error) { return apiError(error); }
 }

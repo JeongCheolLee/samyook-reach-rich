@@ -1,8 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 
 interface Member {
+  id: string;
+  version: number;
   name: string;
   icon: string;
   totalContributed: number;
@@ -11,6 +14,8 @@ interface Member {
 interface Deposit {
   id: string;
   memberName: string;
+  memberId: string;
+  kind: "deposit" | "adjustment" | "opening";
   amount: number;
   depositedAt: number;
   createdAt: number;
@@ -69,153 +74,105 @@ export default function AdminPage() {
   useEffect(() => {
     fetch("/api/auth/check").then((r) => {
       setAuthed(r.ok);
-      if (r.ok) loadAll();
+      if (r.ok) void loadAll();
       else setLoading(false);
-    });
+    }).catch(() => { setAuthed(false); setLoading(false); setLoginError("서버에 연결하지 못했습니다"); });
   }, []);
 
   async function loadAll() {
     setLoading(true);
-    const [mRes, dRes] = await Promise.all([
-      fetch("/api/members"),
-      fetch("/api/deposits"),
-    ]);
-    const [m, d] = await Promise.all([mRes.json(), dRes.json()]);
-    setMembers(m);
-    setDeposits(d);
-    if (m.length > 0 && !depMember) setDepMember(m[0].name);
-    setLoading(false);
+    try {
+      const [mRes, dRes] = await Promise.all([fetch("/api/members"), fetch("/api/deposits")]);
+      if (!mRes.ok || !dRes.ok) throw new Error("불러오기 실패");
+      const [m, d]: [Member[], Deposit[]] = await Promise.all([mRes.json(), dRes.json()]);
+      setMembers(m);
+      setDeposits(d);
+      setDepMember((selected) => m.some((member) => member.id === selected) ? selected : m[0]?.id ?? "");
+    } catch {
+      setDepError("데이터를 불러오지 못했습니다. 새로고침해주세요");
+    } finally { setLoading(false); }
   }
 
   async function login() {
     setLoginError("");
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    if (res.ok) {
-      setAuthed(true);
-      loadAll();
-    } else {
-      setLoginError("아이디 또는 비밀번호가 틀렸습니다");
-    }
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (res.ok) {
+        setPassword(""); setAuthed(true); await loadAll();
+      } else {
+        const data = await res.json();
+        setLoginError(data.error || "로그인 실패");
+      }
+    } catch { setLoginError("서버에 연결하지 못했습니다"); }
   }
 
   async function logout() {
-    await fetch("/api/auth", { method: "DELETE" });
-    setAuthed(false);
+    try {
+      const res = await fetch("/api/auth", { method: "DELETE" });
+      if (!res.ok) throw new Error("로그아웃 실패");
+      setAuthed(false);
+    } catch { setDepError("로그아웃에 실패했습니다. 다시 시도해주세요"); }
   }
 
-  async function saveMembers(updated: Member[]) {
-    setSaving(true);
-    const res = await fetch("/api/members", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated),
-    });
-    const data = await res.json();
-    setMembers(data);
-    setSaving(false);
+  async function mutate(url: string, method: string, body?: unknown): Promise<boolean> {
+    if (saving) return false;
+    setSaving(true); setDepError("");
+    try {
+      const res = await fetch(url, {
+        method, headers: { "Content-Type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 401) { setAuthed(false); setLoginError("다시 로그인해주세요"); }
+        const stale = res.status === 409 && data.code === "stale_member";
+        if (stale) await loadAll();
+        setDepError(stale ? "다른 변경이 있어 최신 정보를 불러왔습니다. 확인 후 다시 저장해주세요" : data.error || "저장 실패");
+        return false;
+      }
+      await loadAll();
+      return true;
+    } catch { setDepError("네트워크 오류가 발생했습니다. 새로고침 후 저장 여부를 확인해주세요"); return false; }
+    finally { setSaving(false); }
   }
 
-  function addMember() {
+  async function addMember() {
     if (!newName.trim()) return;
-    saveMembers([
-      ...members,
-      { name: newName.trim(), icon: newIcon, totalContributed: 0 },
-    ]);
-    setNewName("");
+    if (await mutate("/api/members", "PUT", { action: "create", name: newName.trim(), icon: newIcon })) setNewName("");
   }
 
-  function removeMember(name: string) {
-    if (!confirm(`${name} 멤버를 삭제할까요? (입금 내역은 보존됩니다)`)) return;
-    saveMembers(members.filter((m) => m.name !== name));
+  function removeMember(member: Member) {
+    if (!confirm(`${member.name} 멤버를 삭제할까요? (입금 내역은 보존됩니다)`)) return;
+    void mutate("/api/members", "PUT", { action: "archive", id: member.id, expectedVersion: member.version });
   }
 
-  function updateContribution(name: string, amount: number) {
-    saveMembers(
-      members.map((m) =>
-        m.name === name ? { ...m, totalContributed: amount } : m
-      )
-    );
+  function updateContribution(member: Member, amount: number) {
+    if (!Number.isSafeInteger(amount)) { setDepError("금액은 원 단위 정수로 입력해주세요"); return; }
+    void mutate("/api/members", "PUT", { action: "update", id: member.id, expectedVersion: member.version, totalContributed: amount });
   }
 
-  function updateIcon(name: string, icon: string) {
-    saveMembers(members.map((m) => (m.name === name ? { ...m, icon } : m)));
+  function updateIcon(member: Member, icon: string) {
+    void mutate("/api/members", "PUT", { action: "update", id: member.id, expectedVersion: member.version, icon });
   }
 
   async function recordDeposit() {
-    setDepError("");
-    if (!depMember) {
-      setDepError("멤버를 선택해주세요");
-      return;
-    }
     const amount = Number(depAmount);
-    if (!Number.isFinite(amount) || amount === 0) {
-      setDepError("금액을 확인해주세요");
-      return;
-    }
-    const dateMs = new Date(`${depDate}T00:00:00`).getTime();
-    if (!Number.isFinite(dateMs)) {
-      setDepError("날짜를 확인해주세요");
-      return;
-    }
-
-    setSaving(true);
-    const res = await fetch("/api/deposits", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        memberName: depMember,
-        amount,
-        depositedAt: dateMs,
-        memo: depMemo,
-      }),
-    });
-    if (!res.ok) {
-      setDepError("저장 실패");
-      setSaving(false);
-      return;
-    }
-    const data = await res.json();
-    setDeposits(data.deposits);
-    setMembers(data.members);
-    setDepMemo("");
-    setSaving(false);
+    if (!depMember || !Number.isSafeInteger(amount) || amount === 0) { setDepError("멤버와 원 단위 금액을 확인해주세요"); return; }
+    const dateMs = new Date(`${depDate}T00:00:00+09:00`).getTime();
+    if (!Number.isFinite(dateMs)) { setDepError("날짜를 확인해주세요"); return; }
+    if (await mutate("/api/deposits", "POST", { memberId: depMember, amount, depositedAt: dateMs, memo: depMemo })) setDepMemo("");
   }
 
-  async function quickDeposit(memberName: string, amount: number) {
-    setSaving(true);
-    const res = await fetch("/api/deposits", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        memberName,
-        amount,
-        depositedAt: Date.now(),
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setDeposits(data.deposits);
-      setMembers(data.members);
-    }
-    setSaving(false);
+  async function quickDeposit(memberId: string, amount: number) {
+    await mutate("/api/deposits", "POST", { memberId, amount, depositedAt: Date.now() });
   }
 
   async function removeDeposit(id: string) {
-    if (!confirm("이 입금 기록을 삭제할까요? (납입금이 차감됩니다)")) return;
-    setSaving(true);
-    const res = await fetch(`/api/deposits?id=${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setDeposits(data.deposits);
-      setMembers(data.members);
-    }
-    setSaving(false);
+    if (!confirm("이 기록을 삭제할까요? (해당 금액만큼 납입금이 조정됩니다)")) return;
+    await mutate(`/api/deposits?id=${encodeURIComponent(id)}`, "DELETE");
   }
 
   if (authed === null) {
@@ -278,8 +235,8 @@ export default function AdminPage() {
     );
   }
 
-  const memberDeposits = (name: string) =>
-    deposits.filter((d) => d.memberName === name);
+  const memberDeposits = (id: string) =>
+    deposits.filter((d) => d.memberId === id);
 
   return (
     <div className="min-h-screen bg-background">
@@ -290,9 +247,9 @@ export default function AdminPage() {
             <span className="text-muted text-sm">Admin</span>
           </div>
           <div className="flex items-center gap-3">
-            <a href="/" className="text-sm text-accent hover:underline">
+            <Link href="/" className="text-sm text-accent hover:underline">
               대시보드
-            </a>
+            </Link>
             <button
               onClick={logout}
               className="text-sm text-muted hover:text-negative"
@@ -314,7 +271,7 @@ export default function AdminPage() {
               className="h-10 px-3 rounded-lg border border-card-border bg-background text-sm"
             >
               {members.map((m) => (
-                <option key={m.name} value={m.name}>
+                <option key={m.id} value={m.id}>
                   {m.icon} {m.name}
                 </option>
               ))}
@@ -373,7 +330,7 @@ export default function AdminPage() {
           ) : (
             <ul className="divide-y divide-card-border">
               {deposits.map((d) => {
-                const member = members.find((m) => m.name === d.memberName);
+                const member = members.find((m) => m.id === d.memberId);
                 return (
                   <li
                     key={d.id}
@@ -383,7 +340,7 @@ export default function AdminPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">
-                          {d.memberName}
+                          {d.memberName}{d.kind !== "deposit" ? " · 잔액 조정" : ""}
                         </span>
                         <span
                           className={`text-sm font-mono ${
@@ -408,6 +365,7 @@ export default function AdminPage() {
                       </div>
                     </div>
                     <button
+                      disabled={saving || d.kind === "opening"}
                       onClick={() => removeDeposit(d.id)}
                       className="w-8 h-8 flex items-center justify-center rounded-lg text-muted hover:text-negative hover:bg-negative-bg transition-colors"
                       aria-label="삭제"
@@ -473,13 +431,14 @@ export default function AdminPage() {
           </div>
           <ul className="divide-y divide-card-border">
             {members.map((m) => {
-              const md = memberDeposits(m.name);
+              const md = memberDeposits(m.id);
               return (
-                <li key={m.name} className="px-4 py-3">
+                <li key={m.id} className="px-4 py-3">
                   <div className="flex items-center gap-3">
                     <select
                       value={m.icon}
-                      onChange={(e) => updateIcon(m.name, e.target.value)}
+                      disabled={saving}
+                      onChange={(e) => updateIcon(m, e.target.value)}
                       className="w-10 h-8 text-center text-lg rounded border border-card-border bg-background"
                     >
                       {ANIMAL_ICONS.map((icon) => (
@@ -493,12 +452,14 @@ export default function AdminPage() {
                     </span>
                     <div className="flex items-center gap-1">
                       <ContributionInput
+                        key={`${m.id}:${m.version}`}
+                        disabled={saving}
                         value={m.totalContributed}
-                        onCommit={(v) => updateContribution(m.name, v)}
+                        onCommit={(v) => updateContribution(m, v)}
                       />
                       <span className="text-xs text-muted">원</span>
                       <button
-                        onClick={() => quickDeposit(m.name, 50000)}
+                        onClick={() => quickDeposit(m.id, 50000)}
                         disabled={saving}
                         className="ml-1 h-8 px-2 rounded bg-accent text-white text-xs font-medium disabled:opacity-50"
                         title="오늘 날짜로 +5만 입금 기록"
@@ -507,7 +468,9 @@ export default function AdminPage() {
                       </button>
                     </div>
                     <button
-                      onClick={() => removeMember(m.name)}
+                      disabled={saving}
+                      aria-label={`${m.name} 삭제`}
+                      onClick={() => removeMember(m)}
                       className="w-8 h-8 flex items-center justify-center rounded-lg text-muted hover:text-negative hover:bg-negative-bg transition-colors"
                     >
                       <svg
@@ -548,19 +511,18 @@ export default function AdminPage() {
 function ContributionInput({
   value,
   onCommit,
+  disabled,
 }: {
+  disabled: boolean;
   value: number;
   onCommit: (v: number) => void;
 }) {
   const [draft, setDraft] = useState(String(value));
 
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
   function commit() {
+    if (!draft.trim()) { setDraft(String(value)); return; }
     const n = Number(draft);
-    if (!Number.isFinite(n) || n === value) return;
+    if (!Number.isSafeInteger(n) || n === value) return;
     onCommit(n);
   }
 
@@ -568,12 +530,14 @@ function ContributionInput({
     <input
       type="number"
       value={draft}
+      disabled={disabled}
+      aria-label="누적 납입금"
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
       }}
-      step={50000}
+      step={1}
       className="w-28 h-8 px-2 text-right text-sm rounded border border-card-border bg-background font-mono"
     />
   );

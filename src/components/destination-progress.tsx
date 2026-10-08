@@ -7,6 +7,30 @@ function formatKRW(amount: number) {
   return new Intl.NumberFormat("ko-KR").format(amount) + "원";
 }
 
+function AnimatedProgressBar({ percent }: { percent: number }) {
+  const [started, setStarted] = useState(false);
+
+  useEffect(() => {
+    let secondFrame: number | undefined;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => setStarted(true));
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+    };
+  }, []);
+
+  return (
+    <div
+      className={`h-full rounded-full bg-accent ${
+        started ? "transition-all duration-700 ease-out" : "transition-none"
+      }`}
+      style={{ width: `${started ? percent : 0}%` }}
+    />
+  );
+}
+
 export function DestinationProgress({
   perPersonValue,
   memberCount,
@@ -28,8 +52,6 @@ export function DestinationProgress({
     : Math.max(0, currentAchievedIdx);
 
   const [viewIdx, setViewIdx] = useState(nextTargetIdx);
-  const [animatedPercent, setAnimatedPercent] = useState(0);
-  const [isAnimating, setIsAnimating] = useState(false);
 
   const viewTier = tiers[viewIdx];
   const tierValue = viewTier.threshold * 10_000;
@@ -43,21 +65,6 @@ export function DestinationProgress({
 
   const totalAmount = viewTier.threshold * 10_000 * memberCount;
 
-  // viewIdx 바뀔 때마다: transition 끄고 0%로 리셋 → 2프레임 후 transition 켜고 채우기
-  useEffect(() => {
-    setIsAnimating(false);
-    setAnimatedPercent(0);
-
-    // 2프레임 대기해야 브라우저가 0% 상태를 실제로 렌더함
-    const raf1 = requestAnimationFrame(() => {
-      const raf2 = requestAnimationFrame(() => {
-        setIsAnimating(true);
-        setAnimatedPercent(targetPercent);
-      });
-      return () => cancelAnimationFrame(raf2);
-    });
-    return () => cancelAnimationFrame(raf1);
-  }, [viewIdx, targetPercent]);
 
   return (
     <section className="rounded-xl border border-card-border bg-card p-6 h-[340px] sm:h-[320px] flex flex-col">
@@ -91,14 +98,8 @@ export function DestinationProgress({
 
         {/* 프로그레스 바 */}
         <div className="w-full bg-gray-100 rounded-full h-5 overflow-hidden mb-2">
-          <div
-            className={`h-full rounded-full bg-accent ${
-              isAnimating
-                ? "transition-all duration-700 ease-out"
-                : "transition-none"
-            }`}
-            style={{ width: `${animatedPercent}%` }}
-          />
+          {/* 목표가 바뀌면 0%로 다시 마운트한 뒤 두 프레임 후 채웁니다. */}
+          <AnimatedProgressBar key={`${viewIdx}:${targetPercent}`} percent={targetPercent} />
         </div>
 
         {/* 금액 라벨 */}

@@ -1,0 +1,8 @@
+[Unit]
+Description=REACH RICH PostgreSQL backup to private S3
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/reach-rich-backup
+UMask=0077
