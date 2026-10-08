@@ -1,0 +1,250 @@
+name: Validate and deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate with PostgreSQL 16
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      APP_URL: http://localhost:3000
+      DATABASE_URL: postgresql://postgres:ci-only-password@localhost:5432/reach_rich_auth_test
+      TEST_DATABASE_URL: postgresql://postgres:ci-only-password@localhost:5432/reach_rich_domain_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Create isolated test databases
+        run: |
+          node --input-type=module <<'JS'
+          import pg from 'pg';
+          const url = new URL(process.env.DATABASE_URL);
+          url.pathname = '/postgres';
+          const pool = new pg.Pool({ connectionString: url.href });
+          try {
+            await pool.query('CREATE DATABASE reach_rich_auth_test');
+            await pool.query('CREATE DATABASE reach_rich_domain_test');
+          } finally {
+            await pool.end();
+          }
+          JS
+          DATABASE_URL="$TEST_DATABASE_URL" npm run db:migrate
+      - run: npm run lint
+      - name: Generate Next.js route types and check TypeScript
+        run: |
+          npx next typegen
+          npm run typecheck
+      - run: npm test
+
+  build:
+    name: Build Linux release
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      release-id: ${{ steps.package.outputs.release-id }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build standalone app for the AWS host
+        run: |
+          docker buildx build --platform linux/amd64 \
+            --file Dockerfile.build \
+            --build-arg APP_URL=https://36-reach-rich.jeongcheol.cloud \
+            --output "type=local,dest=$RUNNER_TEMP/release" .
+      - name: Package immutable release and checksum
+        id: package
+        run: |
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          [[ "$release_id" =~ ^[0-9a-f]{40}-[0-9]+-[0-9]+$ ]]
+          test -f "$RUNNER_TEMP/release/server.js"
+          test -f "$RUNNER_TEMP/release/ops/migrate.cjs"
+          printf '%s\n' "$release_id" > "$RUNNER_TEMP/release/RELEASE_ID"
+          tar -C "$RUNNER_TEMP/release" -czf "$RUNNER_TEMP/reach-rich.tar.gz" .
+          release_sha256=$(sha256sum "$RUNNER_TEMP/reach-rich.tar.gz" | cut -d ' ' -f 1)
+          printf '%s  reach-rich.tar.gz\n' "$release_sha256" > "$RUNNER_TEMP/reach-rich.sha256"
+          printf 'release-id=%s\nsha256=%s\n' "$release_id" "$release_sha256" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/reach-rich.tar.gz
+            ${{ runner.temp }}/reach-rich.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  deploy:
+    name: Deploy AWS production
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: reach-rich-production
+      cancel-in-progress: false
+    env:
+      AWS_REGION: ap-northeast-2
+      AWS_DEFAULT_REGION: ap-northeast-2
+      AWS_PAGER: ''
+      AWS_INSTANCE_ID: i-08c4b50d904fec61e
+      RELEASE_BUCKET: reach-rich-148617059023-apne2
+      RELEASE_ID: ${{ needs.build.outputs.release-id }}
+      RELEASE_SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      - name: Reject superseded main releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$main_sha" != "$GITHUB_SHA" ]]; then
+            echo 'A newer main commit exists. This superseded release will not be deployed.'
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/artifact
+      - name: Verify artifact identity
+        working-directory: ${{ runner.temp }}/artifact
+        run: |
+          [[ "$RELEASE_ID" =~ ^[0-9a-f]{40}-[0-9]+-[0-9]+$ ]]
+          [[ "$RELEASE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          test "$RELEASE_ID" = "${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          sha256sum --check reach-rich.sha256
+          printf '%s  reach-rich.tar.gz\n' "$RELEASE_SHA256" | sha256sum --check -
+          test "$(tar -xOzf reach-rich.tar.gz ./RELEASE_ID)" = "$RELEASE_ID"
+      - name: Assume deployment role using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-2
+          role-session-name: reach-rich-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 1800
+          allowed-account-ids: '148617059023'
+      - name: Upload verified release
+        run: |
+          aws s3 cp "$RUNNER_TEMP/artifact/reach-rich.tar.gz" \
+            "s3://$RELEASE_BUCKET/releases/ci/$RELEASE_ID.tar.gz" \
+            --sse AES256 --only-show-errors
+      - name: Start the approved SSM deployment document
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$main_sha" != "$GITHUB_SHA" ]]; then
+            echo 'Main changed before deployment. Leaving the current server release running.'
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path(os.environ['RUNNER_TEMP'], 'deploy-parameters.json').write_text(json.dumps({
+              'ReleaseId': [os.environ['RELEASE_ID']],
+              'Sha256': [os.environ['RELEASE_SHA256']],
+          }))
+          PY
+          command_id=$(aws ssm send-command \
+            --document-name ReachRich-Deploy \
+            --instance-ids "$AWS_INSTANCE_ID" \
+            --parameters "file://$RUNNER_TEMP/deploy-parameters.json" \
+            --timeout-seconds 600 \
+            --comment "ReachRich $RELEASE_ID" \
+            --query Command.CommandId --output text)
+          printf 'command-id=%s\n' "$command_id" >> "$GITHUB_OUTPUT"
+      - name: Wait for deployment completion (up to 10 minutes)
+        env:
+          SSM_COMMAND_ID: ${{ steps.dispatch.outputs.command-id }}
+          AWS_MAX_ATTEMPTS: '1'
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys, time
+          deadline = time.monotonic() + 600
+          previous = None
+          while time.monotonic() < deadline:
+              command = [
+                  'aws', 'ssm', 'get-command-invocation',
+                  '--command-id', os.environ['SSM_COMMAND_ID'],
+                  '--instance-id', os.environ['AWS_INSTANCE_ID'],
+                  '--cli-connect-timeout', '5', '--cli-read-timeout', '10',
+                  '--output', 'json',
+              ]
+              try:
+                  result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+              except subprocess.TimeoutExpired:
+                  time.sleep(5)
+                  continue
+              if result.returncode:
+                  if 'InvocationDoesNotExist' in result.stderr:
+                      time.sleep(5)
+                      continue
+                  print('Could not read SSM command status; inspect the command in AWS.', file=sys.stderr)
+                  sys.exit(1)
+              invocation = json.loads(result.stdout)
+              status = invocation.get('Status')
+              if status != previous:
+                  print(f'SSM deployment status: {status}', flush=True)
+                  previous = status
+              if status == 'Success':
+                  expected = 'deployedReleaseId=' + os.environ['RELEASE_ID']
+                  if invocation.get('ResponseCode') != 0 or expected not in invocation.get('StandardOutputContent', '').splitlines():
+                      print('SSM did not confirm the expected deployed release.', file=sys.stderr)
+                      sys.exit(1)
+                  sys.exit(0)
+              if status in {'Failed', 'Cancelled', 'TimedOut', 'Cancelling'}:
+                  print('Deployment failed; inspect the SSM command and retained server logs.', file=sys.stderr)
+                  sys.exit(1)
+              time.sleep(5)
+          print('SSM deployment exceeded 10 minutes. Inspect command status before retrying.', file=sys.stderr)
+          sys.exit(1)
+          PY
+      - name: Verify public HTTPS health
+        run: |
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 20 \
+            --retry 5 --retry-delay 5 --retry-connrefused \
+            https://36-reach-rich.jeongcheol.cloud/api/health \
+            --output "$RUNNER_TEMP/health.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          health = json.loads(Path(os.environ['RUNNER_TEMP'], 'health.json').read_text())
+          if health.get('status') != 'ok':
+              raise SystemExit('Public HTTPS health check failed')
+          print('Public HTTPS and PostgreSQL health verified.')
+          PY
